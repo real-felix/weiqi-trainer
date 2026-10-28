@@ -1,6 +1,7 @@
 use crate::{
     domain::*,
     engine::{Engine, Evaluation},
+    preview::{Preview, PreviewCache},
     repository::Repository,
 };
 use serde::Serialize;
@@ -23,6 +24,7 @@ pub struct Job {
 pub struct App {
     pub repo: Mutex<Repository>,
     pub engine: Engine,
+    previews: Mutex<PreviewCache>,
     queue: Mutex<VecDeque<Job>>,
     running: Mutex<Option<Job>>,
     epoch: AtomicU64,
@@ -54,6 +56,7 @@ impl App {
         Arc::new(Self {
             repo: Mutex::new(repo),
             engine: Engine::new(events),
+            previews: Mutex::new(PreviewCache::default()),
             queue: Mutex::new(VecDeque::new()),
             running: Mutex::new(None),
             epoch: AtomicU64::new(0),
@@ -64,6 +67,18 @@ impl App {
     }
     pub fn changed(&self) {
         let _ = self.engine.events.send("refresh".into());
+    }
+    pub fn preview(&self, id: &str, head: &str) -> Result<Arc<Preview>> {
+        // Serialize cold builds so concurrent image requests do not duplicate work.
+        // Cache hits need neither SQLite nor engine analysis.
+        let mut cache = self.previews.lock().unwrap();
+        if let Some(preview) = cache.get(id, head) {
+            return Ok(preview);
+        }
+        let game = self.repo.lock().unwrap().game(id)?;
+        let preview = Arc::new(Preview::render(&game, head)?);
+        cache.insert(id, head, preview.clone());
+        Ok(preview)
     }
     pub fn enqueue(&self, game: &str, node: &str, visits: u32, priority: bool) {
         {

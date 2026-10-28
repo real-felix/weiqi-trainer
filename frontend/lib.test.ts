@@ -17,6 +17,24 @@ describe('presentation transforms', () => {
     expect(rankLabel(-1)).toBe('1k');
     expect(rankLabel(0)).toBe('1d');
   });
+  it('walks long paths without enumerating the whole tree and stops at cycles', () => {
+    const nodes = Object.fromEntries(
+      Array.from({ length: 1000 }, (_, i) => [
+        String(i),
+        { ...fixtureGame.nodes.a, id: String(i), parent: i ? String(i - 1) : null },
+      ]),
+    );
+    const indexed = new Proxy(nodes, {
+      ownKeys() {
+        throw new Error('A parent traversal must not enumerate unrelated nodes');
+      },
+    });
+    expect(path(indexed, '999')).toHaveLength(1000);
+    expect(path(indexed, 'missing')).toEqual([]);
+    nodes['0'].parent = '999';
+    expect(new Set(path(indexed, '999').map((node) => node.id)).size).toBe(1000);
+    expect(path(indexed, '999')).toHaveLength(1000);
+  });
   it('selects complete connected stone groups without wrapping rows', () => {
     const board = Array(361).fill(0);
     for (const p of [0, 1, 19, 18]) board[p] = 1;

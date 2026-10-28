@@ -77,7 +77,8 @@
     display: grid;
     align-content: start;
     gap: 2px;
-    padding: 3px;
+    padding: 3px 14px 3px 3px;
+    scrollbar-gutter: stable;
   }
   button {
     display: flex;

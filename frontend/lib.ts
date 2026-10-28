@@ -123,12 +123,13 @@ export const coordinate = (point: number | null) =>
 export const ranks = Array.from({ length: 29 }, (_, i) => i - 20);
 export function path(nodes: Record<string, Node>, head: string): Node[] {
   const result: Node[] = [];
+  const seen = new Set<string>();
   let current: string | null = head;
-  while (current && nodes[current]) {
+  while (current && nodes[current] && !seen.has(current)) {
     const n: Node = nodes[current];
+    seen.add(current);
     result.push(n);
     current = n.parent;
-    if (result.length > Object.keys(nodes).length) break;
   }
   return result.reverse();
 }

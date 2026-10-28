@@ -2,6 +2,7 @@ mod api;
 mod app;
 mod domain;
 mod engine;
+mod preview;
 mod repository;
 mod settings;
 mod sgf;

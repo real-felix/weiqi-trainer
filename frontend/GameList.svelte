@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowRight, BookOpen, CirclePlay, Upload } from '@lucide/svelte';
+  import { ArrowRight, Upload } from '@lucide/svelte';
   import { rankLabel, shortDate, lastPlayed, type Game } from './lib';
   let {
     title,
@@ -31,31 +31,36 @@
   {#if games.length}
     <div class="game-list">
       {#each games as game (game.id)}
-        <button class="game-row" onclick={() => onopen(game.id)}>
-          <span class="game-icon" class:finished={!!game.result}>
-            {#if game.result}<BookOpen size={21} aria-hidden="true" />{:else}<CirclePlay
-                size={21}
-                aria-hidden="true"
-              />{/if}
-          </span>
+        <button class="game-row" data-game-id={game.id} onclick={() => onopen(game.id)}>
+          <img
+            class="game-preview"
+            src={`/api/games/${game.id}/preview.svg?head=${game.active_head}&v=1`}
+            alt=""
+            width="400"
+            height="400"
+            loading="lazy"
+            decoding="async"
+          />
           <span class="game-name">
             <strong
               >{game.imported ? 'Imported game' : `vs Human SL ${rankLabel(game.rank)}`}</strong
             >
-            <small
-              >{shortDate(game.created_at)} · {game.human === 'B' ? 'Black' : 'White'} · {game.mode ===
-              'auto'
-                ? 'Auto'
-                : game.mode === 'manual'
-                  ? 'Manual'
-                  : 'SGF'}</small
-            >
+            <ArrowRight size={18} class="row-arrow" aria-hidden="true" />
           </span>
-          <span class="game-result"
-            >{game.result ?? (game.status === 'scoring' ? 'Scoring' : 'In progress')}</span
+          <span class="game-details"
+            >{shortDate(game.created_at)} · {game.human === 'B' ? 'Black' : 'White'} · {game.mode ===
+            'auto'
+              ? 'Auto'
+              : game.mode === 'manual'
+                ? 'Manual'
+                : 'SGF'}</span
           >
-          <span class="last-played">{lastPlayed(game.updated_at)}</span>
-          <ArrowRight size={18} class="row-arrow" aria-hidden="true" />
+          <span class="game-outcome">
+            <span class="game-result"
+              >{game.result ?? (game.status === 'scoring' ? 'Scoring' : 'In progress')}</span
+            >
+            <span class="last-played">{lastPlayed(game.updated_at)}</span>
+          </span>
         </button>
       {/each}
     </div>

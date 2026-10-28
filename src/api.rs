@@ -49,6 +49,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/games", post(create))
         .route("/api/games/import", post(import))
         .route("/api/games/{id}", get(game))
+        .route("/api/games/{id}/preview.svg", get(preview))
         .route("/api/games/{id}/moves", post(moves))
         .route("/api/games/{id}/continue", post(activate))
         .route("/api/games/{id}/retry", post(retry))
@@ -92,6 +93,55 @@ async fn state(State(a): State<Arc<App>>) -> ApiResult<Json<Value>> {
     Ok(Json(
         json!({"schema_version":1,"games":games,"opponent_rank":p.auto_rank,"initialized":p.initialized,"settings":settings,"engine":a.engine.status.lock().unwrap().clone(),"data_dir":a.data_dir}),
     ))
+}
+#[derive(Deserialize)]
+struct PreviewQuery {
+    head: String,
+}
+async fn preview(
+    State(a): State<Arc<App>>,
+    Path(id): Path<String>,
+    Query(query): Query<PreviewQuery>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    let image = tokio::task::spawn_blocking(move || a.preview(&id, &query.head))
+        .await
+        .map_err(|_| {
+            ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Unable to build board preview".into(),
+            )
+        })??;
+    let unchanged = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value.split(',').any(|tag| {
+                let tag = tag.trim();
+                tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == image.etag
+            })
+        });
+    Ok((
+        if unchanged {
+            StatusCode::NOT_MODIFIED
+        } else {
+            StatusCode::OK
+        },
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (
+                header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable",
+            ),
+            (header::ETAG, image.etag.as_str()),
+        ],
+        if unchanged {
+            String::new()
+        } else {
+            image.svg.clone()
+        },
+    )
+        .into_response())
 }
 async fn events(
     State(a): State<Arc<App>>,
@@ -356,7 +406,7 @@ async fn export(State(a): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        format!("attachment; filename=weiqi-{id}.sgf")
+        format!("attachment; filename=weiqi-trainer-{id}.sgf")
             .parse()
             .unwrap(),
     );
@@ -380,6 +430,94 @@ async fn audit(State(a): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<J
 mod tests {
     use super::*;
     use tower::ServiceExt;
+    #[tokio::test]
+    async fn board_previews_cache_immutable_positions_and_validate_etags() {
+        use http_body_util::BodyExt;
+        let mut repo =
+            crate::repository::Repository::open(std::path::Path::new(":memory:")).unwrap();
+        let mut game = Game::new(Color::B, -5, "auto".into());
+        let root = game.root.clone();
+        let head = game.add(&root, Some(60), false).unwrap();
+        repo.save(&game).unwrap();
+        let app = App::new(repo, "test".into());
+        let cached = app.preview(&game.id, &head).unwrap();
+        // Review branches change updated_at, but never invalidate the played image.
+        game.add(&root, Some(61), true).unwrap();
+        app.repo.lock().unwrap().save(&game).unwrap();
+        assert!(Arc::ptr_eq(&cached, &app.preview(&game.id, &head).unwrap()));
+        let router = router(app.clone());
+        let uri = format!("/api/games/{}/preview.svg?head={head}&v=1", game.id);
+        let request = |uri: &str| Request::builder().uri(uri).header("host", "127.0.0.1:3000");
+        let response = router
+            .clone()
+            .oneshot(request(&uri).body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/svg+xml");
+        assert!(
+            response.headers()[header::CACHE_CONTROL]
+                .to_str()
+                .unwrap()
+                .contains("immutable")
+        );
+        let etag = response.headers()[header::ETAG].clone();
+        let original = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(String::from_utf8_lossy(&original).contains("<use href=\"#b\" x=\"80\" y=\"80\""));
+        let response = router
+            .clone()
+            .oneshot(
+                request(&uri)
+                    .header(header::IF_NONE_MATCH, etag.clone())
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .is_empty()
+        );
+        let next = game.add_opponent(&head, Some(300)).unwrap();
+        app.repo.lock().unwrap().save(&game).unwrap();
+        let next_uri = format!("/api/games/{}/preview.svg?head={next}&v=1", game.id);
+        let response = router
+            .clone()
+            .oneshot(
+                request(&next_uri)
+                    .header(header::IF_NONE_MATCH, etag)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_ne!(response.headers()[header::ETAG], cached.etag);
+        let response = router
+            .clone()
+            .oneshot(request(&uri).body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.into_body().collect().await.unwrap().to_bytes(),
+            original
+        );
+        let response = router
+            .oneshot(
+                request("/api/games/missing/preview.svg?head=missing")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
     #[tokio::test]
     async fn rejects_cross_origin_and_has_initial_state() {
         let r = crate::repository::Repository::open(std::path::Path::new(":memory:")).unwrap();

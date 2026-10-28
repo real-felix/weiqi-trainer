@@ -1,4 +1,6 @@
-# Local Go Trainer — Product Requirements
+# Weiqi Trainer — Product Requirements
+
+**Subtitle:** Local go partner
 
 **Status:** Implementation-ready v1.0  
 **Platform:** Local web app, macOS/Apple Silicon first  
@@ -14,9 +16,9 @@
 
 ## 2. Home
 
-Home contains a **New game** action, current **opponent** rank/mode, and two separate cards: **Ongoing games** first (resume), then **Review games** (finished and imported records). Settings has its own page, accessible from the navbar. Game lists show date, opponent rank, color, result/status, and a useful last-played indicator. No separate player-rank display is required.
+Home contains a **New game** action, current **opponent** rank/mode, and two separate cards: **Ongoing games** first (resume), then **Review games** (finished and imported records). Settings has its own page, accessible from the navbar. Games appear as clickable board-preview tiles, with date, opponent rank, color, result/status, and a useful last-played indicator. Use cached, compact SVG images of the active played position, generated on demand; avoid an interactive board or complete game-tree fetch for each tile. Keep ongoing previews current when generation is cheap, and reuse unchanged images across analysis and review-only branch updates. Desktop cards accommodate three board previews per row. No separate player-rank display is required.
 
-The Home introduction is two lines: **Find your next move.** followed by **Play against a human-like opponent. Learn from every game.** Use a 16px base text size, a compact navbar with default-size links, consistent card padding, and Lucide UI icons. Preserve the original two-stone brand mark, “weiqi” wordmark and “LOCAL GO TRAINER” subtitle as the Home button; do not add a separate Home link. Card titles (Human SL rank, Ongoing games, Review games and Local engine) are `h2` elements with one shared style. Do not add decorative introduction artwork, an opponent eyebrow on the New game card, or a promotional footer.
+The Home introduction is two lines: **Find your next move.** followed by **Play against a human-like opponent. Learn from every game.** Use a 16px base text size, a compact navbar with default-size links, consistent card padding, and Lucide UI icons. Use the green accent consistently for hover/focus feedback, including Settings and board previews, and the two-stone brand image as the favicon. Preserve the original two-stone brand mark, “Weiqi Trainer” wordmark and “Local go partner” subtitle (displayed in uppercase) as the Home button; do not add a separate Home link. Card titles (Human SL rank, Ongoing games, Review games and Local engine) are `h2` elements with one shared style. Do not add decorative introduction artwork, an opponent eyebrow on the New game card, or a promotional footer.
 
 ### New game
 
@@ -27,7 +29,7 @@ The Home introduction is two lines: **Find your next move.** followed by **Play 
 
 ## 3. Game workspace
 
-One lean screen for both play and review: Go board, unobtrusive move controls, variation navigator, and a persistent engine status bar. Put the opponent rank/player color and the **Play / Review** switch for ongoing games in the navbar; omit the opponent-mode eyebrow and visible keyboard instruction footer. The original branding is a Home link with consistent pointer, hover and keyboard focus behavior. Keep the board fully within the viewport in both modes; scroll the sidebar independently. The Play sidebar fills the available height, and the variation list follows newly selected/played moves without disturbing an older review selection. No evaluation hints in Play mode.
+One lean screen for both play and review: Go board, unobtrusive move controls, variation navigator, and a persistent engine status bar. Reserve a clear margin between coordinates and outer stones, and keep the board hit targets aligned with the intersections. Show selected/total move counters (for example 6/13), using the active played line for the total rather than counting review branches. Omit generic history/exploration guidance and the idle “Take your time”/“No clock” text. Align the Play turn label with the board topline and leave space between sidebar content and scrollbars. Put the opponent rank/player color and the **Play / Review** switch for ongoing games in the navbar; omit the opponent-mode eyebrow and visible keyboard instruction footer. The original branding is a Home link with consistent pointer, hover and keyboard focus behavior. Keep the board fully within the viewport in both modes; scroll the sidebar independently. Align board navigation and the captures/export footer with the same bottom padding; keep the sidebar footer visible while its contents scroll. The Play sidebar fills the available height, and the variation list follows newly selected/played moves without disturbing an older review selection. No evaluation hints in Play mode.
 
 ### Play mode (ongoing games)
 

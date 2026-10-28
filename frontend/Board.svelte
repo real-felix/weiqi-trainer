@@ -23,8 +23,12 @@
   let hovered = $state<number | null>(null);
   const rows = Array.from({ length: 19 }, (_, i) => i);
   const stars = [3, 9, 15];
-  const x = (p: number) => 32 + (p % 19) * 32;
-  const y = (p: number) => 32 + Math.floor(p / 19) * 32;
+  const step = 32;
+  const gridStart = 48;
+  const gridEnd = gridStart + 18 * step;
+  const boardSize = gridEnd + gridStart;
+  const x = (p: number) => gridStart + (p % 19) * step;
+  const y = (p: number) => gridStart + Math.floor(p / 19) * step;
   function key(event: KeyboardEvent, point: number) {
     const offsets: Record<string, number> = {
       ArrowLeft: -1,
@@ -42,7 +46,12 @@
 </script>
 
 <div class="board-frame">
-  <svg class="board" viewBox="0 0 640 640" role="img" aria-label="19 by 19 Go board">
+  <svg
+    class="board"
+    viewBox={`0 0 ${boardSize} ${boardSize}`}
+    role="img"
+    aria-label="19 by 19 Go board"
+  >
     <defs>
       <linearGradient id="wood" x2="0.8" y2="1"
         ><stop stop-color="#e6c991" /><stop offset="1" stop-color="#d9b579" /></linearGradient
@@ -60,22 +69,20 @@
         /></radialGradient
       >
     </defs>
-    <rect width="640" height="640" rx="5" fill="url(#wood)" />
+    <rect width={boardSize} height={boardSize} rx="5" fill="url(#wood)" />
     {#each rows as n (n)}
       <path
-        d={`M32 ${32 + n * 32}H608 M${32 + n * 32} 32V608`}
+        d={`M${gridStart} ${y(n * 19)}H${gridEnd} M${x(n)} ${gridStart}V${gridEnd}`}
         stroke="#6e593a"
         stroke-width={n === 0 || n === 18 ? 1.6 : 1}
         opacity="0.75"
       />
-      <text x={32 + n * 32} y="17" text-anchor="middle" class="coords"
-        >{'ABCDEFGHJKLMNOPQRST'[n]}</text
-      >
-      <text x="17" y={36 + n * 32} text-anchor="middle" class="coords">{19 - n}</text>
+      <text x={x(n)} y="20" text-anchor="middle" class="coords">{'ABCDEFGHJKLMNOPQRST'[n]}</text>
+      <text x="20" y={y(n * 19) + 4} text-anchor="middle" class="coords">{19 - n}</text>
     {/each}
     {#each stars as a (a)}{#each stars as b (b)}<circle
-          cx={32 + a * 32}
-          cy={32 + b * 32}
+          cx={gridStart + a * step}
+          cy={gridStart + b * step}
           r="3.5"
           fill="#59492f"
         />{/each}{/each}
@@ -137,6 +144,7 @@
   </svg>
   <div
     class="intersections"
+    style:inset={`${((gridStart - step / 2) / boardSize) * 100}%`}
     role="grid"
     aria-label="Board intersections. Arrow keys move, Enter places a stone."
   >
@@ -189,7 +197,6 @@
   }
   .intersections {
     position: absolute;
-    inset: 2.5%;
     display: grid;
     grid-template-rows: repeat(19, 1fr);
   }
@@ -210,7 +217,7 @@
     box-shadow: none;
   }
   .board-row button:focus-visible {
-    outline: 2px solid #316c4c;
+    outline: 2px solid var(--accent);
     outline-offset: -2px;
     background: #fff4;
   }

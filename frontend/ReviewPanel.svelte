@@ -1,7 +1,7 @@
 <script lang="ts">
   import Charts from './Charts.svelte';
   import { ChevronDown, ChevronRight, Circle, CircleDashed } from '@lucide/svelte';
-  import { labels, colors, coordinate, path, type GameView, type Candidate } from './lib';
+  import { labels, colors, coordinate, treeRows, type GameView, type Candidate } from './lib';
   let {
     view,
     onselect,
@@ -18,6 +18,9 @@
   let severity = $state('All moves');
   let sort = $state('severity');
   const evaluation = $derived(view.evaluations[view.selected]);
+  const moveNumbers = $derived(
+    new Map(treeRows(view.game).map(({ node, move }) => [node.id, move])),
+  );
   const rows = $derived(
     view.reviews
       .filter((r) => severity === 'All moves' || r.label === severity)
@@ -26,7 +29,7 @@
           ? labels.indexOf(b.label as (typeof labels)[number]) -
               labels.indexOf(a.label as (typeof labels)[number]) ||
             (b.score_loss ?? 0) - (a.score_loss ?? 0)
-          : path(view.game.nodes, a.node).length - path(view.game.nodes, b.node).length,
+          : (moveNumbers.get(a.node) ?? 0) - (moveNumbers.get(b.node) ?? 0),
       ),
   );
 </script>
@@ -105,8 +108,7 @@
         class:current={view.selected === r.node}
         title={`${r.confidence} · ${r.version}`}
       >
-        <span class="move-index"
-          >{path(view.game.nodes, n.id).length - 1}. {n.color} {coordinate(n.point)}</span
+        <span class="move-index">{moveNumbers.get(n.id)}. {n.color} {coordinate(n.point)}</span
         ><span class="classification" style:color={colors[r.label ?? ''] ?? 'var(--muted)'}
           >{#if r.label}<Circle
               size={8}
@@ -210,6 +212,8 @@
     padding: 7px;
   }
   .review-list {
+    padding-right: 14px;
+    scrollbar-gutter: stable;
     max-height: 200px;
     overflow: auto;
     display: grid;

@@ -1,4 +1,4 @@
-# Local Go Trainer — Engineering Guidelines
+# Weiqi Trainer — Engineering Guidelines
 
 This file governs coding-agent contributions. Read `PRD.md` first. Prefer the smallest implementation that satisfies a documented requirement; do not invent product features.
 

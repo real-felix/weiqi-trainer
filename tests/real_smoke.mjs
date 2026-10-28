@@ -37,7 +37,7 @@ try {
   const id=page.url().split('/').pop();let view;const deadline=Date.now()+30000;
   do {await pause(100);view=await request(`/games/${id}`);} while((Object.keys(view.game.nodes).length<3 || view.thinking) && Date.now()<deadline);
   assert.equal(Object.keys(view.game.nodes).length,3);assert.equal(view.position.turn,'B');
-  await expect(page.getByRole('heading',{name:'Take your time.'})).toBeVisible();
+  await expect(page.getByText('YOUR TURN',{exact:true})).toBeVisible();
   await expect(page.locator('svg.board circle[fill="url(#black)"]')).toHaveCount(1);
   await expect(page.locator('svg.board circle[fill="url(#white)"]')).toHaveCount(1);
   await page.getByRole('gridcell',{name:'E16, empty',exact:true}).hover();

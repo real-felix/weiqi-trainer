@@ -30,8 +30,10 @@
     type Scoring,
   } from './lib';
 
-  let appState = $state<State | null>(null);
-  let view = $state<GameView | null>(null);
+  // Server snapshots are replaced as a whole, never edited in place. Avoid deep
+  // proxies and subscriptions for every node/evaluation in a long review.
+  let appState = $state.raw<State | null>(null);
+  let view = $state.raw<GameView | null>(null);
   let gameId = $state<string | null>(null);
   let selected = $state<string | null>(null);
   let follow = $state(true);
@@ -61,6 +63,7 @@
   const isScoring = $derived(!!view && view.game.status === 'scoring' && active && !review);
   const selectedNode = $derived(view?.game.nodes[view.selected]);
   const currentPath = $derived(view ? path(view.game.nodes, view.selected) : []);
+  const totalMoves = $derived(view ? path(view.game.nodes, view.game.active_head).length - 1 : 0);
   const playable = $derived(
     !!view &&
       !busy &&
@@ -421,9 +424,13 @@
 <svelte:window onkeydown={keyboard} />
 <div class="app-shell" class:game-open={!!gameId}>
   <header class="app-header">
-    <a class="brand" href="/" onclick={(event) => navigateLink(event, home)} aria-label="Weiqi home"
-      ><span class="brand-mark" aria-hidden="true"><i></i><i></i></span><span class="brand-name"
-        >weiqi<span class="brand-subtitle">LOCAL GO TRAINER</span></span
+    <a
+      class="brand"
+      href="/"
+      onclick={(event) => navigateLink(event, home)}
+      aria-label="Weiqi Trainer home"
+      ><img class="brand-mark" src="/brand.svg" width="34" height="37" alt="" /><span
+        class="brand-name">Weiqi Trainer<span class="brand-subtitle">LOCAL GO PARTNER</span></span
       ></a
     >
     {#if gameId && view}
@@ -464,7 +471,7 @@
       >
     </div>{/if}
   {#if !appState}<main class="loading">
-      <LoaderCircle class="spinner" size={19} aria-hidden="true" /> Opening your local trainer…
+      <LoaderCircle class="spinner" size={19} aria-hidden="true" /> Opening Weiqi Trainer…
     </main>
   {:else if settingsPage}
     <main class="settings-main">
@@ -575,7 +582,7 @@
                 : isScoring
                   ? 'Confirm stone status'
                   : `${view.position.turn === 'B' ? 'Black' : 'White'} to move`}</span
-            ><span>Move {currentPath.length - 1} <i>·</i> 19 × 19 <i>·</i> AGA</span>
+            ><span>Move {currentPath.length - 1}/{totalMoves} <i>·</i> 19 × 19 <i>·</i> AGA</span>
           </div>
           <div class="board-area">
             <Board
@@ -589,6 +596,9 @@
               onplay={(p) => void play(p)}
             />
           </div>
+          {#if isScoring}
+            <p class="board-hint">Select whole groups on the board to mark them dead.</p>
+          {/if}
           <div class="board-navigation">
             <div class="history-controls">
               <button
@@ -599,10 +609,11 @@
                 onclick={() => navigate(-1)}
                 aria-label="Previous move"
                 title="Previous move (←)"><ChevronLeft size={21} aria-hidden="true" /></button
-              ><span>{currentPath.length - 1}</span><button
-                onclick={() => navigate(1)}
-                aria-label="Next move"
-                title="Next move (→)"><ChevronRight size={21} aria-hidden="true" /></button
+              ><span
+                aria-label={`Move ${currentPath.length - 1} of ${totalMoves} on the active line`}
+                >{currentPath.length - 1}/{totalMoves}</span
+              ><button onclick={() => navigate(1)} aria-label="Next move" title="Next move (→)"
+                ><ChevronRight size={21} aria-hidden="true" /></button
               ><button
                 onclick={toActive}
                 aria-label="Return to active continuation"
@@ -612,116 +623,110 @@
             </div>
             <button class="text-button" onclick={toActive}>Return to active line</button>
           </div>
-          {#if isScoring || review || !active}
-            <p class="board-hint">
-              {isScoring
-                ? 'Select whole groups on the board to mark them dead.'
-                : review
-                  ? 'Place a stone to explore a variation. Your played game stays preserved.'
-                  : 'You’re viewing history. A different move preserves the previous line.'}
-            </p>
-          {/if}
         </section>
         <aside class="game-sidebar" class:reviewing={review}>
-          {#if !review}
-            <section class="turn-panel">
-              <p class="eyebrow">
-                {isScoring
-                  ? 'TWO PASSES'
-                  : view.thinking
-                    ? 'OPPONENT’S TURN'
-                    : view.position.turn === view.game.human
-                      ? 'YOUR TURN'
-                      : 'OPPONENT’S TURN'}
-              </p>
-              <h2>
-                {isScoring
-                  ? 'Settle the board.'
-                  : view.thinking
-                    ? 'Considering a move…'
-                    : view.position.turn === view.game.human
-                      ? 'Take your time.'
-                      : 'Ready to continue?'}
-              </h2>
-              <p class="muted small">
-                {isScoring
-                  ? 'Agree on dead stones, then confirm the final score. Resume play if either side disagrees.'
-                  : view.thinking
-                    ? 'The human model is choosing a move. You can still explore the history.'
-                    : 'No clock. Find a move that feels right.'}
-              </p>
-              {#if view.thinking}<div class="thinking-indicator" role="status">
-                  <LoaderCircle class="spinner" size={18} aria-hidden="true" /> Human SL {rankLabel(
-                    view.game.rank,
-                  )} is thinking
-                </div>{/if}
-              {#if isScoring}
-                <button class="primary" onclick={() => checkScore()} disabled={busy || scorePending}
-                  >{scorePending ? 'Checking stone status…' : 'Check score with opponent'}</button
-                >
-                {#if scoringMessage}<p class="small" role="status">{scoringMessage}</p>{/if}
-                {#if scoring}<div class="score-preview">
-                    Black {scoring.score.black.toFixed(1)} · White {scoring.score.white.toFixed(
-                      1,
-                    )}<strong>{scoring.score.result}</strong>
-                  </div>
-                  {#if !scoring.agreed && scoring.suggested_dead.length}<button
-                      onclick={() => {
-                        dead = [...scoring!.suggested_dead];
-                        scoring = null;
-                      }}>Use opponent’s dead-stone suggestion</button
-                    >{/if}{#if scoring.agreed}<button
-                      class="primary"
-                      onclick={() => checkScore(true)}
-                      disabled={busy}>Confirm final result</button
-                    >
-                    <p class="small muted">
-                      This result and its rating update are permanent.
-                    </p>{/if}{/if}
-                <button onclick={() => continueHere(true)} disabled={busy}
-                  >Disagree / resume play</button
-                >
-              {:else}<div class="play-actions">
-                  <button disabled={!playable} onclick={() => play(null)}>Pass</button><button
-                    class="subtle-danger"
-                    disabled={busy}
-                    onclick={resign}>Resign</button
-                  >
-                </div>
-                {#if !active || view.position.turn !== view.game.human}<button
-                    class="wide"
-                    disabled={busy || view.thinking}
-                    onclick={() => continueHere()}>Continue play from here</button
-                  >{/if}
-                {#if appState.engine.human.state === 'error'}<p class="error small">
-                    {appState.engine.human.error}
+          <div class="sidebar-content">
+            {#if !review}
+              <section class="turn-panel">
+                <p class="eyebrow">
+                  {isScoring
+                    ? 'TWO PASSES'
+                    : view.thinking
+                      ? 'OPPONENT’S TURN'
+                      : view.position.turn === view.game.human
+                        ? 'YOUR TURN'
+                        : 'OPPONENT’S TURN'}
+                </p>
+                {#if isScoring}
+                  <h2>Settle the board.</h2>
+                  <p class="muted small">
+                    Agree on dead stones, then confirm the final score. Resume play if either side
+                    disagrees.
                   </p>
+                {:else if view.thinking}
+                  <h2>Considering a move…</h2>
+                  <p class="muted small">
+                    The human model is choosing a move. You can still explore the history.
+                  </p>
+                {:else if view.position.turn !== view.game.human}
+                  <h2>Ready to continue?</h2>
+                {/if}
+                {#if view.thinking}<div class="thinking-indicator" role="status">
+                    <LoaderCircle class="spinner" size={18} aria-hidden="true" /> Human SL {rankLabel(
+                      view.game.rank,
+                    )} is thinking
+                  </div>{/if}
+                {#if isScoring}
                   <button
-                    onclick={() => api(`/games/${gameId}/retry`, {}).catch((e) => showError(e))}
-                    >Retry opponent move</button
-                  >{/if}
-              {/if}
+                    class="primary"
+                    onclick={() => checkScore()}
+                    disabled={busy || scorePending}
+                    >{scorePending ? 'Checking stone status…' : 'Check score with opponent'}</button
+                  >
+                  {#if scoringMessage}<p class="small" role="status">{scoringMessage}</p>{/if}
+                  {#if scoring}<div class="score-preview">
+                      Black {scoring.score.black.toFixed(1)} · White {scoring.score.white.toFixed(
+                        1,
+                      )}<strong>{scoring.score.result}</strong>
+                    </div>
+                    {#if !scoring.agreed && scoring.suggested_dead.length}<button
+                        onclick={() => {
+                          dead = [...scoring!.suggested_dead];
+                          scoring = null;
+                        }}>Use opponent’s dead-stone suggestion</button
+                      >{/if}{#if scoring.agreed}<button
+                        class="primary"
+                        onclick={() => checkScore(true)}
+                        disabled={busy}>Confirm final result</button
+                      >
+                      <p class="small muted">
+                        This result and its rating update are permanent.
+                      </p>{/if}{/if}
+                  <button onclick={() => continueHere(true)} disabled={busy}
+                    >Disagree / resume play</button
+                  >
+                {:else}<div class="play-actions">
+                    <button disabled={!playable} onclick={() => play(null)}>Pass</button><button
+                      class="subtle-danger"
+                      disabled={busy}
+                      onclick={resign}>Resign</button
+                    >
+                  </div>
+                  {#if !active || view.position.turn !== view.game.human}<button
+                      class="wide"
+                      disabled={busy || view.thinking}
+                      onclick={() => continueHere()}>Continue play from here</button
+                    >{/if}
+                  {#if appState.engine.human.state === 'error'}<p class="error small">
+                      {appState.engine.human.error}
+                    </p>
+                    <button
+                      onclick={() => api(`/games/${gameId}/retry`, {}).catch((e) => showError(e))}
+                      >Retry opponent move</button
+                    >{/if}
+                {/if}
+              </section>
+            {:else}<ReviewPanel
+                {view}
+                onselect={(id) => void selectNode(id)}
+                oncandidate={(c) => void candidateLine(c)}
+                ondeep={queueAnalysis}
+                oncancel={() => void api(`/games/${gameId}/analysis/cancel`, {})}
+              />{/if}
+            <section class="variation-panel">
+              <div class="section-heading">
+                <h2>Variations</h2>
+                <span class="small muted">{Object.keys(view.game.nodes).length - 1} moves</span>
+              </div>
+              <History
+                game={view.game}
+                selected={view.selected}
+                {review}
+                reviews={view.reviews}
+                onselect={(id) => void selectNode(id)}
+              />
             </section>
-          {:else}<ReviewPanel
-              {view}
-              onselect={(id) => void selectNode(id)}
-              oncandidate={(c) => void candidateLine(c)}
-              ondeep={queueAnalysis}
-              oncancel={() => void api(`/games/${gameId}/analysis/cancel`, {})}
-            />{/if}
-          <section class="variation-panel">
-            <div class="section-heading">
-              <h2>Variations</h2>
-              <span class="small muted">{Object.keys(view.game.nodes).length - 1} moves</span>
-            </div>
-            <History
-              game={view.game}
-              selected={view.selected}
-              {review}
-              reviews={view.reviews}
-              onselect={(id) => void selectNode(id)}
-            />
-          </section>
+          </div>
           <div class="game-metadata">
             <span>Captures · B {view.position.captures[0]} / W {view.position.captures[1]}</span><a
               href={`/api/games/${gameId}/sgf`}

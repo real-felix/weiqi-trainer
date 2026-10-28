@@ -1,4 +1,6 @@
-# Weiqi — Local Go Trainer
+# Weiqi Trainer
+
+*Local go partner.*
 
 A local Svelte 5 + Rust web app for human-like Go sparring and strong-engine review. All play, branches, analysis, ratings and settings stay in SQLite on your machine. The runtime makes no external requests.
 
@@ -38,6 +40,7 @@ Live updates reconnect and fetch the latest state after laptop sleep, returning 
 
 ## Use
 
+- **Home:** ongoing games and reviews are board tiles. Their SVG previews show the active played position and use browser/server caches; analysis and exploratory branches leave the preview unchanged. Images load on demand and update when active play advances.
 - **New game:** Auto starts at your chosen initial difficulty (5k by default), then uses the internal continuous rating and hysteresis. Manual overrides only that game’s opponent. Both completed modes update rating. Colors alternate unless selected explicitly.
 - **Game workspace:** opponent rank, your color and Play/Review controls live in the navbar. The board stays within the window while the sidebar scrolls independently. Variations use the available sidebar height and keep the selected move visible as play advances; reviewing an older move preserves that selection. The branding links back to Home.
 - **Play:** select an empty intersection or Pass. Moves are server-validated under 19×19 AGA rules, komi 7.5, no handicap or clock. Navigate history freely; playing a different legal human move preserves the old line and changes the active continuation. “Continue play from here” lets the opponent move when the selected position is its turn.
@@ -71,3 +74,5 @@ npm run test:real
 The normal suite uses deterministic protocol fixtures and temporary databases. The real adapter test validates all 29 profiles and restart. The real browser smoke plays against KataGo, adds a review-only branch, and checks persistence after restarting the server. It uses temporary data, port 43128, and writes screenshots under `.local/`. Do not run it while that port is occupied.
 
 For the implementation and acceptance mapping see [milestones](docs/IMPLEMENTATION.md), [API contracts](docs/API.md), and the [architecture decision](docs/adr/001-domain-and-engine.md).
+
+Navigation benchmarks and their reproduction commands are documented in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).

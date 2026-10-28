@@ -5,10 +5,33 @@ import Board from './Board.svelte';
 import ReviewPanel from './ReviewPanel.svelte';
 import EngineStatus from './EngineStatus.svelte';
 import App from './App.svelte';
+import GameList from './GameList.svelte';
 import { fixtureGame, fixtureView, fixtureState } from './fixtures';
 afterEach(() => {
   vi.unstubAllGlobals();
   history.replaceState(null, '', '/');
+});
+it('uses one lazy cached image per Home game and changes its URL only with the active head', async () => {
+  const onopen = vi.fn();
+  const rendered = render(GameList, {
+    title: 'Ongoing games',
+    games: [fixtureGame],
+    emptyMessage: 'No games',
+    onopen,
+  });
+  const image = rendered.container.querySelector('img')!;
+  const url = image.getAttribute('src');
+  expect(url).toContain(`head=${fixtureGame.active_head}`);
+  expect(image).toHaveAttribute('loading', 'lazy');
+  expect(rendered.container.querySelectorAll('svg.board, [role="gridcell"]')).toHaveLength(0);
+  await fireEvent.click(screen.getByRole('button', { name: /vs Human SL/ }));
+  expect(onopen).toHaveBeenCalledWith(fixtureGame.id);
+  await rendered.rerender({
+    games: [{ ...fixtureGame, updated_at: 'later', nodes: { ...fixtureGame.nodes } }],
+  });
+  expect(image.getAttribute('src')).toBe(url);
+  await rendered.rerender({ games: [{ ...fixtureGame, active_head: 'new-head' }] });
+  expect(image.getAttribute('src')).toContain('head=new-head');
 });
 it('navigates variations with active and selected cues, hiding labels outside review', async () => {
   const onselect = vi.fn();

@@ -10,6 +10,7 @@ JSON commands and queries under `/api`, with `{ "error": "…" }` on application
 | POST `/engine/restart` | `{}` | Restarts both workers, revalidates profiles, recovers pending turns and missing analysis |
 | POST `/games` | `{mode:"auto"|"manual",rank?,starting_rank?,color?:"B"|"W"}` | `{id}`; requires a validated rank-conditioned human model |
 | GET `/games/{id}?node={node}` | Optional selected node | game + normalized node map, selected board, analysis map, recalculated move reviews, thinking flag; selection is never persisted as active head |
+| GET `/games/{id}/preview.svg?head={node}&v=1` | Immutable move-node ID (required), representation version | SVG board including captures and last move; no evaluations. Private immutable browser cache, bounded server LRU, ETag and conditional 304. Use the active head from `/state`; no full game fetch is needed. |
 | POST `/games/{id}/moves` | `{parent,point:number|null,review:boolean,expected_head?}` | `{node}`; Play requires matching active-head token, human turn and unfinished game; Review changes no active result; same move/parent reuses a node |
 | POST `/games/{id}/continue` | `{node,expected_head,resume?:boolean}` | Switches active continuation and generates opponent move if needed; resume resets pass count at that node without deleting passes |
 | POST `/games/{id}/retry` | `{}` | Retries a pending opponent turn; per-game generation is deduplicated |
@@ -18,7 +19,7 @@ JSON commands and queries under `/api`, with `{ "error": "…" }` on application
 | POST `/games/{id}/resign` | `{head}` | Finalizes loss by resignation; retry returns existing immutable result |
 | POST `/games/{id}/score` | `{head,dead:number[],confirm?:boolean}` | Queues deep ownership if missing, otherwise score + agreement/disagreement + suggested whole dead groups; only agreed `confirm:true` finalizes |
 | GET `/games/{id}/audit` | — | Rating before/after, opponent rank, result, timestamp, algorithm, or null for unfinished/imported game |
-| GET `/games/{id}/sgf` | — | SGF attachment including variations and active-head/resume metadata |
+| GET `/games/{id}/sgf` | — | `weiqi-trainer-{id}.sgf` attachment including variations and active-head/resume metadata |
 | POST `/games/import` | `{sgf:string}` | `{id}` for a review-only imported record, no rating event |
 
 Finalization is transactionally idempotent by game ID. In-flight engine replies also carry an expected active head; stale responses cannot overwrite a changed or finalized continuation. The UI keeps its selected node and Play/Review state separately and rejects stale navigation responses. Evaluations are displayed only in Review (scoring has its separate explicit agreement flow).
