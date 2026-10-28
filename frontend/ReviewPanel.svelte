@@ -1,5 +1,6 @@
 <script lang="ts">
   import Charts from './Charts.svelte';
+  import { ChevronDown, ChevronRight, Circle, CircleDashed } from '@lucide/svelte';
   import { labels, colors, coordinate, path, type GameView, type Candidate } from './lib';
   let {
     view,
@@ -56,8 +57,11 @@
       {#each evaluation.candidates.slice(0, 5) as c, i (i)}
         <button onclick={() => oncandidate(c)} title={`Explore ${c.pv.map(coordinate).join(' → ')}`}
           ><span class="candidate-letter">{String.fromCharCode(65 + i)}</span><span
-            ><strong>{coordinate(c.point)}</strong><small
-              >{c.pv.slice(1, 5).map(coordinate).join(' → ')}</small
+            ><strong>{coordinate(c.point)}</strong><small class="pv-line"
+              >{#each c.pv.slice(1, 5) as point, i (i)}{#if i > 0}<ChevronRight
+                    size={11}
+                    aria-hidden="true"
+                  />{/if}<span>{coordinate(point)}</span>{/each}</small
             ></span
           ><span class="candidate-score"
             >{c.score_black >= 0 ? 'B' : 'W'} +{Math.abs(c.score_black).toFixed(1)}<small
@@ -68,7 +72,13 @@
       {/each}
     </div>
     <details class="analysis-identity">
-      <summary>Analysis provenance</summary>
+      <summary
+        >Analysis provenance<ChevronDown
+          size={15}
+          class="disclosure-icon"
+          aria-hidden="true"
+        /></summary
+      >
       <p>{evaluation.visits} visits · {new Date(evaluation.created_at).toLocaleString()}</p>
       <code>{evaluation.engine}<br />{evaluation.model}<br />{evaluation.config}</code>
     </details>
@@ -98,7 +108,11 @@
         <span class="move-index"
           >{path(view.game.nodes, n.id).length - 1}. {n.color} {coordinate(n.point)}</span
         ><span class="classification" style:color={colors[r.label ?? ''] ?? 'var(--muted)'}
-          >{r.label ? '● ' : '◌ '}{r.label ?? 'Pending'}</span
+          >{#if r.label}<Circle
+              size={8}
+              fill="currentColor"
+              aria-hidden="true"
+            />{:else}<CircleDashed size={12} aria-hidden="true" />{/if}{r.label ?? 'Pending'}</span
         ><span class="loss">{r.score_loss === null ? '—' : `−${r.score_loss.toFixed(1)}`}</span>
       </button>
     {/each}
@@ -120,16 +134,16 @@
     gap: 5px;
   }
   .evaluation strong {
-    font-size: 23px;
+    font-size: 1.625rem;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
   }
   .evaluation span {
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: var(--muted);
   }
   h3 {
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 550;
     margin: 16px 0 10px;
   }
@@ -145,7 +159,7 @@
     background: var(--paper);
     padding: 9px;
     text-align: left;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
   .candidate-letter {
     background: #e7edf5;
@@ -155,14 +169,14 @@
     display: grid;
     place-items: center;
     color: #3673ba;
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .candidates strong {
     font-weight: 500;
   }
   small {
     display: block;
-    font-size: 9px;
+    font-size: 0.75rem;
     color: var(--muted);
     margin-top: 4px;
   }
@@ -170,15 +184,15 @@
     margin-left: auto;
     text-align: right;
     font-variant-numeric: tabular-nums;
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .analysis-identity {
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: var(--muted);
     margin-top: 12px;
   }
   .analysis-identity code {
-    font-size: 9px;
+    font-size: 0.75rem;
     overflow-wrap: anywhere;
   }
   .review-heading {
@@ -192,7 +206,7 @@
   .review-filters select {
     min-width: 0;
     width: 50%;
-    font-size: 11px;
+    font-size: var(--text-xs);
     padding: 7px;
   }
   .review-list {
@@ -209,14 +223,22 @@
     border: 0;
     background: transparent;
     text-align: left;
-    font-size: 10px;
+    font-size: var(--text-xs);
   }
   .review-list button.current {
     background: var(--sage);
   }
   .classification {
     margin-left: auto;
-    font-size: 10px;
+    font-size: var(--text-xs);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .pv-line {
+    display: flex;
+    align-items: center;
+    gap: 2px;
   }
   .loss {
     width: 30px;
@@ -225,7 +247,7 @@
     font-variant-numeric: tabular-nums;
   }
   .heuristic {
-    font-size: 10px;
+    font-size: var(--text-xs);
     line-height: 1.7;
     margin-bottom: 0;
   }

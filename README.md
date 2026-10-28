@@ -2,6 +2,8 @@
 
 A local Svelte 5 + Rust web app for human-like Go sparring and strong-engine review. All play, branches, analysis, ratings and settings stay in SQLite on your machine. The runtime makes no external requests.
 
+Home separates ongoing games from finished/imported games ready for review. Settings is a dedicated page at `/#settings`. The interface uses a 16px text base and locally bundled Lucide icons.
+
 ## Install and run
 
 Requires a current Rust toolchain, Node.js 22.12+ (or 24+), and KataGo with a supported local backend. The validated machine uses Homebrew KataGo **1.18.2 / Metal** on Apple Silicon.
@@ -37,6 +39,7 @@ Live updates reconnect and fetch the latest state after laptop sleep, returning 
 ## Use
 
 - **New game:** Auto starts at your chosen initial difficulty (5k by default), then uses the internal continuous rating and hysteresis. Manual overrides only that game’s opponent. Both completed modes update rating. Colors alternate unless selected explicitly.
+- **Game workspace:** opponent rank, your color and Play/Review controls live in the navbar. The board stays within the window while the sidebar scrolls independently. Variations use the available sidebar height and keep the selected move visible as play advances; reviewing an older move preserves that selection. The branding links back to Home.
 - **Play:** select an empty intersection or Pass. Moves are server-validated under 19×19 AGA rules, komi 7.5, no handicap or clock. Navigate history freely; playing a different legal human move preserves the old line and changes the active continuation. “Continue play from here” lets the opponent move when the selected position is its turn.
 - **Review:** explicitly switch on an ongoing game. Finished games open here. Place alternatives or choose a candidate to add its line, without changing the active continuation or the final result. The variation list distinguishes the active line, forks and selected node. Missing analysis queues in the background; selected positions get priority.
 - **Keyboard:** on the board, arrows move focus and Enter/Space plays. Outside the board and form controls, Left/Right navigate history and End returns to the active continuation. Every classification includes text as well as color.

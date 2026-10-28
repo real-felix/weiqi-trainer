@@ -183,7 +183,7 @@
     display: block;
   }
   .coords {
-    font-size: 11px;
+    font-size: 12px;
     fill: #5d4c2f;
     font-family: inherit;
   }

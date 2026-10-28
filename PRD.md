@@ -7,14 +7,16 @@
 ## 1. Product principles
 
 - Training, not competition. The estimated rating is an internal difficulty-selection mechanism, not an achievement or anti-cheating system.
-- Two destinations only: **Home** and **Game**. Avoid dashboards, intrusive controls, and separate Play/Review pages.
+- Three destinations: **Home**, **Game**, and a dedicated **Settings** page. Avoid dashboards, intrusive controls, and separate Play/Review pages.
 - All games, variations, ratings, models, and analyses remain on the user's machine. No runtime network dependency or telemetry.
 - Non-destructive game history: changing a move preserves the previous continuation.
 - Strong AI analyzes; a human-trained AI plays. Never confuse the two.
 
 ## 2. Home
 
-Home contains a **New game** action, ongoing games (resume), finished games (open for review), current **opponent** rank/mode, and settings. Game lists show date, opponent rank, color, result/status, and a useful last-played indicator. Finished and ongoing games are visually distinct. No separate player-rank display is required.
+Home contains a **New game** action, current **opponent** rank/mode, and two separate cards: **Ongoing games** first (resume), then **Review games** (finished and imported records). Settings has its own page, accessible from the navbar. Game lists show date, opponent rank, color, result/status, and a useful last-played indicator. No separate player-rank display is required.
+
+The Home introduction is two lines: **Find your next move.** followed by **Play against a human-like opponent. Learn from every game.** Use a 16px base text size, a compact navbar with default-size links, consistent card padding, and Lucide UI icons. Preserve the original two-stone brand mark, “weiqi” wordmark and “LOCAL GO TRAINER” subtitle as the Home button; do not add a separate Home link. Card titles (Human SL rank, Ongoing games, Review games and Local engine) are `h2` elements with one shared style. Do not add decorative introduction artwork, an opponent eyebrow on the New game card, or a promotional footer.
 
 ### New game
 
@@ -25,7 +27,7 @@ Home contains a **New game** action, ongoing games (resume), finished games (ope
 
 ## 3. Game workspace
 
-One lean screen for both play and review: Go board, unobtrusive move controls, variation navigator, a **Play / Review** switch for ongoing games, and a persistent engine status bar. No evaluation hints in Play mode.
+One lean screen for both play and review: Go board, unobtrusive move controls, variation navigator, and a persistent engine status bar. Put the opponent rank/player color and the **Play / Review** switch for ongoing games in the navbar; omit the opponent-mode eyebrow and visible keyboard instruction footer. The original branding is a Home link with consistent pointer, hover and keyboard focus behavior. Keep the board fully within the viewport in both modes; scroll the sidebar independently. The Play sidebar fills the available height, and the variation list follows newly selected/played moves without disturbing an older review selection. No evaluation hints in Play mode.
 
 ### Play mode (ongoing games)
 

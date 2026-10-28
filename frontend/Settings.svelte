@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, type Settings } from './lib';
+  import { ArrowUpRight, ChevronDown } from '@lucide/svelte';
   let { value, dataDir, onsaved }: { value: Settings; dataDir: string; onsaved: () => void } =
     $props();
   function initialDraft() {
@@ -29,7 +30,7 @@
 
 <section class="settings-panel panel" aria-label="Engine settings">
   <div class="section-heading">
-    <h2>Local engine</h2>
+    <h2 class="card-title">Local engine</h2>
     <span class="eyebrow">Your machine, your data</span>
   </div>
   <p class="muted">
@@ -66,7 +67,13 @@
       /></label
     >
     <details>
-      <summary>Analysis & resignation</summary>
+      <summary
+        >Analysis & resignation<ChevronDown
+          size={17}
+          class="disclosure-icon"
+          aria-hidden="true"
+        /></summary
+      >
       <div class="settings-grid">
         <label
           >Quick visits<input
@@ -137,7 +144,13 @@
       </div>
     </details>
     <details>
-      <summary>Move classification calibration</summary>
+      <summary
+        >Move classification calibration<ChevronDown
+          size={17}
+          class="disclosure-icon"
+          aria-hidden="true"
+        /></summary
+      >
       <p class="muted small">
         These are adjustable heuristics, not validated measures of human skill. Score or win
         probability loss can trigger a label; weaker ranks get a small tolerance. Low-visit
@@ -186,7 +199,7 @@
       <button class="primary" disabled={saving}>{saving ? 'Saving…' : 'Save & validate'}</button><a
         href="https://github.com/lightvector/KataGo/releases/tag/v1.15.0"
         target="_blank"
-        rel="noreferrer">Human model & setup ↗</a
+        rel="noreferrer">Human model & setup<ArrowUpRight size={16} aria-hidden="true" /></a
       >
     </div>
   </form>
@@ -199,12 +212,12 @@
 <style>
   form {
     display: grid;
-    gap: 15px;
+    gap: 20px;
   }
   label {
     display: grid;
     gap: 7px;
-    font-size: 12px;
+    font-size: 1rem;
     font-weight: 550;
   }
   input {
@@ -213,7 +226,7 @@
   .settings-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 15px;
+    gap: 20px;
     margin-top: 15px;
   }
   .check {

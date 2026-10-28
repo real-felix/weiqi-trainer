@@ -5,13 +5,23 @@
   import SettingsPanel from './Settings.svelte';
   import EngineStatus from './EngineStatus.svelte';
   import ReviewPanel from './ReviewPanel.svelte';
+  import GameList from './GameList.svelte';
+  import {
+    Settings as SettingsIcon,
+    Plus,
+    X,
+    ChevronLeft,
+    ChevronRight,
+    ChevronsLeft,
+    ChevronsRight,
+    LoaderCircle,
+    Download,
+  } from '@lucide/svelte';
   import { watchLiveUpdates } from './live-updates';
   import {
     api,
     rankLabel,
     ranks,
-    shortDate,
-    lastPlayed,
     path,
     groupAt,
     type State,
@@ -26,7 +36,7 @@
   let selected = $state<string | null>(null);
   let follow = $state(true);
   let mode = $state<'play' | 'review'>('play');
-  let settingsOpen = $state(false);
+  let settingsPage = $state(false);
   let newGameOpen = $state(false);
   let difficultyMode = $state('auto');
   let rank = $state(-5);
@@ -108,6 +118,7 @@
     await Promise.all([loadState(reportError), loadGame(reportError)]);
   }
   async function openGame(id: string) {
+    settingsPage = false;
     gameId = id;
     view = null;
     selected = null;
@@ -118,25 +129,36 @@
     error = '';
     scorePending = false;
     navVersion++;
-    if (location.hash !== `#game/${id}`) history.replaceState(null, '', `#game/${id}`);
+    setLocation(`#game/${id}`);
     await loadGame();
     if (view && review) queueAnalysis();
   }
   function home() {
+    settingsPage = false;
     gameId = null;
     view = null;
     selected = null;
     navVersion++;
-    history.replaceState(null, '', location.pathname);
+    setLocation('');
     void loadState();
   }
   function openSettings() {
-    home();
-    settingsOpen = true;
-    setTimeout(
-      () => document.getElementById('settings')?.scrollIntoView({ behavior: 'smooth' }),
-      0,
-    );
+    settingsPage = true;
+    gameId = null;
+    view = null;
+    selected = null;
+    navVersion++;
+    setLocation('#settings');
+    void loadState();
+  }
+  function setLocation(hash: string) {
+    if (location.hash !== hash) history.pushState(null, '', hash || location.pathname);
+  }
+  function navigateLink(event: MouseEvent, action: () => void) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+      return;
+    event.preventDefault();
+    action();
   }
   async function selectNode(id: string) {
     selected = id;
@@ -377,17 +399,17 @@
   }
   onMount(() => {
     void loadState();
-    const match = location.hash.match(/^#game\/([a-f0-9-]+)$/);
-    if (match) void openGame(match[1]);
     const stopUpdates = watchLiveUpdates({
       onSync: () => refresh(false),
       onConnection: (value) => (connected = value),
     });
     const route = () => {
       const match = location.hash.match(/^#game\/([a-f0-9-]+)$/);
-      if (match) void openGame(match[1]);
+      if (location.hash === '#settings') openSettings();
+      else if (match) void openGame(match[1]);
       else home();
     };
+    route();
     window.addEventListener('hashchange', route);
     return () => {
       stopUpdates();
@@ -397,84 +419,91 @@
 </script>
 
 <svelte:window onkeydown={keyboard} />
-<div class="app-shell">
+<div class="app-shell" class:game-open={!!gameId}>
   <header class="app-header">
-    <button class="brand" onclick={home} aria-label="Weiqi home"
-      ><span class="brand-mark"><i></i><i></i></span><span
+    <a class="brand" href="/" onclick={(event) => navigateLink(event, home)} aria-label="Weiqi home"
+      ><span class="brand-mark" aria-hidden="true"><i></i><i></i></span><span class="brand-name"
         >weiqi<span class="brand-subtitle">LOCAL GO TRAINER</span></span
-      ></button
+      ></a
     >
-    <nav aria-label="Main navigation">
-      <button class:current={!gameId} onclick={home}>Home</button>{#if gameId}<span
-          class="nav-divider">/</span
-        ><span class="current-game">Game</span>{/if}
-    </nav>
-    <button class="settings-button" onclick={openSettings} aria-label="Settings"
-      >⚙ <span>Settings</span></button
+    {#if gameId && view}
+      <div class="navbar-game">
+        <div>
+          <h1>
+            {view.game.imported ? 'Imported game' : `Human SL ${rankLabel(view.game.rank)}`}
+            <span class="versus">·</span>
+            <span class="game-you">You play {view.game.human === 'B' ? 'Black' : 'White'}</span>
+          </h1>
+        </div>
+        <div class="mode-switch" aria-label="Game mode">
+          {#if !view.game.result}<button
+              class:chosen={!review}
+              aria-pressed={!review}
+              onclick={() => switchMode('play')}>Play</button
+            >{/if}<button
+            class:chosen={review}
+            aria-pressed={review}
+            onclick={() => switchMode('review')}>Review</button
+          >
+        </div>
+      </div>
+    {/if}
+    <a
+      href="#settings"
+      class="settings-button"
+      aria-current={settingsPage ? 'page' : undefined}
+      onclick={(event) => navigateLink(event, openSettings)}
+      ><SettingsIcon size={19} aria-hidden="true" /><span>Settings</span></a
     >
   </header>
   {#if error}<div class="error-banner" role="alert">
       <span>{error}</span><button
         class="text-button"
         onclick={() => (error = '')}
-        aria-label="Dismiss error">×</button
+        aria-label="Dismiss error"><X size={19} aria-hidden="true" /></button
       >
     </div>{/if}
   {#if !appState}<main class="loading">
-      <span class="spinner"></span> Opening your local trainer…
+      <LoaderCircle class="spinner" size={19} aria-hidden="true" /> Opening your local trainer…
+    </main>
+  {:else if settingsPage}
+    <main class="settings-main">
+      <header class="page-intro">
+        <h1>Settings</h1>
+        <p>Configure your local engines and analysis.</p>
+      </header>
+      <SettingsPanel
+        value={appState.settings}
+        dataDir={appState.data_dir}
+        onsaved={() => void loadState()}
+      />
     </main>
   {:else if !gameId}
     <main class="home-main">
       <section class="home-intro">
         <div>
-          <p class="eyebrow">A LITTLE PRACTICE, EVERY DAY</p>
           <h1>Find your next move.</h1>
-          <p class="intro-copy">
-            A quiet place to play, explore, and improve.<br />A human-like opponent. A stronger
-            perspective.
-          </p>
-        </div>
-        <div class="intro-art" aria-hidden="true">
-          <svg viewBox="0 0 180 160"
-            ><path
-              d="M20 30h140M20 70h140M20 110h140M20 150h140M30 20v135M70 20v135M110 20v135M150 20v135"
-              stroke="#b4c1ac"
-              stroke-width="1"
-            /><circle cx="70" cy="70" r="18" fill="#30382d" /><circle
-              cx="110"
-              cy="110"
-              r="18"
-              fill="#fafaf5"
-              stroke="#b5c1ad"
-            /><circle cx="110" cy="30" r="18" fill="#30382d" /><circle
-              cx="30"
-              cy="110"
-              r="18"
-              fill="#fafaf5"
-              stroke="#b5c1ad"
-            /></svg
-          >
+          <p class="intro-copy">Play against a human-like opponent. Learn from every game.</p>
         </div>
       </section>
       <section class="new-game-card">
         <div>
-          <span class="eyebrow">YOUR NEXT OPPONENT</span>
-          <h2>Human SL <span>{rankLabel(appState.opponent_rank)}</span></h2>
+          <h2 class="card-title">Human SL {rankLabel(appState.opponent_rank)}</h2>
           <p>Adaptive strength · 19 × 19 · AGA · 7.5 komi</p>
         </div>
         <button class="primary new-game" onclick={() => (newGameOpen = !newGameOpen)}
-          >New game <span>↗</span></button
+          >New game <Plus size={19} aria-hidden="true" /></button
         >
       </section>
       {#if newGameOpen}
         <form class="new-game-form panel" onsubmit={start} aria-label="New game options">
           <div class="section-heading">
-            <h2>Make room for a game</h2>
+            <h2 class="card-title">Make room for a game</h2>
             <button
               type="button"
               class="text-button"
               onclick={() => (newGameOpen = false)}
-              aria-label="Close new game options">×</button
+              aria-label="Close new game options"><X size={19} aria-hidden="true" /></button
             >
           </div>
           <div class="form-row">
@@ -516,93 +545,26 @@
           </div>
         </form>
       {/if}
-      <div class="library-heading">
-        <h2>Your games <span>{appState.games.length}</span></h2>
-        <label class="import-button"
-          >Import SGF <span>↓</span><input
-            type="file"
-            accept=".sgf,application/x-go-sgf"
-            onchange={importSgf}
-            disabled={busy}
-          /></label
-        >
-      </div>
-      {#if !appState.games.length}<section class="empty-appState">
-          <span class="empty-board" aria-hidden="true">＋</span>
-          <h3>Every game is a fresh start.</h3>
-          <p>Your games and every variation will be kept here.</p>
-        </section>{/if}
-      {#each [{ title: 'In progress', games: ongoing }, { title: 'Finished & imported', games: finished }] as group (group.title)}
-        {#if group.games.length}<section class="game-group">
-            <h3>{group.title}</h3>
-            <div class="game-list">
-              {#each group.games as game (game.id)}<button
-                  class="game-row"
-                  onclick={() => openGame(game.id)}
-                  ><span class="game-icon" class:finished={!!game.result}
-                    >{game.result ? '○' : '◉'}</span
-                  ><span class="game-name"
-                    ><strong
-                      >{game.imported
-                        ? 'Imported game'
-                        : `vs Human SL ${rankLabel(game.rank)}`}</strong
-                    ><small
-                      >{shortDate(game.created_at)} · {game.human === 'B' ? 'Black' : 'White'} · {game.mode ===
-                      'auto'
-                        ? 'Auto'
-                        : game.mode === 'manual'
-                          ? 'Manual'
-                          : 'SGF'}</small
-                    ></span
-                  ><span class="game-result"
-                    >{game.result ?? (game.status === 'scoring' ? 'Scoring' : 'In progress')}</span
-                  ><span class="last-played">{lastPlayed(game.updated_at)}</span><span
-                    class="row-arrow">↗</span
-                  ></button
-                >{/each}
-            </div>
-          </section>{/if}
-      {/each}
-      <section id="settings" class="settings-section">
-        <button
-          class="settings-toggle"
-          aria-expanded={settingsOpen}
-          onclick={() => (settingsOpen = !settingsOpen)}
-          ><span>⚙ &nbsp; Engine & settings</span><span>{settingsOpen ? '−' : '+'}</span></button
-        >{#if settingsOpen}<SettingsPanel
-            value={appState.settings}
-            dataDir={appState.data_dir}
-            onsaved={() => void loadState()}
-          />{/if}
-      </section>
-      <p class="home-footnote">Saved locally. No accounts, no clocks, just Go.</p>
+      <GameList
+        title="Ongoing games"
+        games={ongoing}
+        emptyMessage="No ongoing games."
+        onopen={(id) => void openGame(id)}
+      />
+      <GameList
+        title="Review games"
+        games={finished}
+        emptyMessage="No games to review yet."
+        onopen={(id) => void openGame(id)}
+        onimport={importSgf}
+        {busy}
+      />
     </main>
-  {:else if !view}<main class="loading"><span class="spinner"></span> Opening game…</main>
+  {:else if !view}<main class="loading">
+      <LoaderCircle class="spinner" size={19} aria-hidden="true" /> Opening game…
+    </main>
   {:else}
     <main class="game-main">
-      <div class="game-heading">
-        <div>
-          <p class="eyebrow">
-            {view.game.imported ? 'IMPORTED RECORD' : `${view.game.mode.toUpperCase()} OPPONENT`}
-          </p>
-          <h1>
-            {view.game.imported ? 'Imported game' : `Human SL ${rankLabel(view.game.rank)}`}
-            <span class="versus">·</span>
-            <span class="game-you">You play {view.game.human === 'B' ? 'Black' : 'White'}</span>
-          </h1>
-        </div>
-        <div class="mode-switch" aria-label="Game mode">
-          {#if !view.game.result}<button
-              class:chosen={!review}
-              aria-pressed={!review}
-              onclick={() => switchMode('play')}>Play</button
-            >{/if}<button
-            class:chosen={review}
-            aria-pressed={review}
-            onclick={() => switchMode('review')}>Review</button
-          >
-        </div>
-      </div>
       <div class="workspace">
         <section class="board-column" aria-label="Go game">
           <div class="board-topline">
@@ -615,49 +577,52 @@
                   : `${view.position.turn === 'B' ? 'Black' : 'White'} to move`}</span
             ><span>Move {currentPath.length - 1} <i>·</i> 19 × 19 <i>·</i> AGA</span>
           </div>
-          <Board
-            board={view.position.board}
-            turn={view.position.turn}
-            last={selectedNode?.point ?? null}
-            disabled={isScoring ? busy : !playable}
-            scoring={isScoring}
-            {dead}
-            candidates={review ? (evaluation?.candidates ?? []) : []}
-            onplay={(p) => void play(p)}
-          />
+          <div class="board-area">
+            <Board
+              board={view.position.board}
+              turn={view.position.turn}
+              last={selectedNode?.point ?? null}
+              disabled={isScoring ? busy : !playable}
+              scoring={isScoring}
+              {dead}
+              candidates={review ? (evaluation?.candidates ?? []) : []}
+              onplay={(p) => void play(p)}
+            />
+          </div>
           <div class="board-navigation">
             <div class="history-controls">
               <button
                 onclick={() => selectNode(view!.game.root)}
                 aria-label="First move"
-                title="First position">|‹</button
+                title="First position"><ChevronsLeft size={21} aria-hidden="true" /></button
               ><button
                 onclick={() => navigate(-1)}
                 aria-label="Previous move"
-                title="Previous move (←)">‹</button
+                title="Previous move (←)"><ChevronLeft size={21} aria-hidden="true" /></button
               ><span>{currentPath.length - 1}</span><button
                 onclick={() => navigate(1)}
                 aria-label="Next move"
-                title="Next move (→)">›</button
+                title="Next move (→)"><ChevronRight size={21} aria-hidden="true" /></button
               ><button
                 onclick={toActive}
                 aria-label="Return to active continuation"
-                title="Active continuation (End)">›|</button
+                title="Active continuation (End)"
+                ><ChevronsRight size={21} aria-hidden="true" /></button
               >
             </div>
             <button class="text-button" onclick={toActive}>Return to active line</button>
           </div>
-          <p class="board-hint">
-            {isScoring
-              ? 'Select whole groups on the board to mark them dead.'
-              : review
-                ? 'Place a stone to explore a variation. Your played game stays preserved.'
-                : !active
-                  ? 'You’re viewing history. A different move preserves the previous line.'
-                  : 'Arrow keys on the board to move · Enter to place a stone'}
-          </p>
+          {#if isScoring || review || !active}
+            <p class="board-hint">
+              {isScoring
+                ? 'Select whole groups on the board to mark them dead.'
+                : review
+                  ? 'Place a stone to explore a variation. Your played game stays preserved.'
+                  : 'You’re viewing history. A different move preserves the previous line.'}
+            </p>
+          {/if}
         </section>
-        <aside class="game-sidebar">
+        <aside class="game-sidebar" class:reviewing={review}>
           {#if !review}
             <section class="turn-panel">
               <p class="eyebrow">
@@ -686,7 +651,9 @@
                     : 'No clock. Find a move that feels right.'}
               </p>
               {#if view.thinking}<div class="thinking-indicator" role="status">
-                  <span class="spinner"></span> Human SL {rankLabel(view.game.rank)} is thinking
+                  <LoaderCircle class="spinner" size={18} aria-hidden="true" /> Human SL {rankLabel(
+                    view.game.rank,
+                  )} is thinking
                 </div>{/if}
               {#if isScoring}
                 <button class="primary" onclick={() => checkScore()} disabled={busy || scorePending}
@@ -758,7 +725,7 @@
           <div class="game-metadata">
             <span>Captures · B {view.position.captures[0]} / W {view.position.captures[1]}</span><a
               href={`/api/games/${gameId}/sgf`}
-              download>Export SGF ↗</a
+              download><Download size={16} aria-hidden="true" /> Export SGF</a
             >
           </div>
         </aside>

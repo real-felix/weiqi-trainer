@@ -39,10 +39,10 @@
         : 'Black win probability by move'}
     >
       <path d="M30 40H290" stroke="var(--line)" stroke-dasharray="3 4" />
-      <text x="0" y="13" fill="var(--muted)" font-size="8"
+      <text x="0" y="13" fill="var(--muted)" font-size="10"
         >{kind === 'score' ? `B+${scale.toFixed(0)}` : '100%'}</text
       >
-      <text x="0" y="75" fill="var(--muted)" font-size="8"
+      <text x="0" y="75" fill="var(--muted)" font-size="10"
         >{kind === 'score' ? `W+${scale.toFixed(0)}` : '0%'}</text
       >
       <polyline
@@ -82,17 +82,17 @@
   .chart-label {
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: var(--text-sm);
     color: var(--muted);
     margin: 10px 0 0;
   }
   .chart-label span:last-child {
-    font-size: 9px;
+    font-size: 0.75rem;
   }
   svg {
     display: block;
     width: 100%;
-    height: 80px;
+    height: 96px;
   }
   .chart-navigation {
     display: flex;
@@ -101,7 +101,7 @@
     max-height: 35px;
   }
   .chart-navigation button {
-    font-size: 9px;
+    font-size: 0.75rem;
     border: 0;
     padding: 3px 5px;
     min-height: 20px;

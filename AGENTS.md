@@ -62,7 +62,7 @@ Keep domain types independent of Svelte and HTTP. Avoid speculative generic inte
 - No large state-management dependency by default. Use framework-independent TypeScript for tree traversal and presentation transforms.
 - Normalize nodes by ID; selected node, active head, and review variations are distinct state values.
 - Prefer SVG for the 19×19 board. Make stone placement, variation navigation, keyboard controls, and status messages accessible.
-- Follow the GNOME-like minimalism in `PRD.md`: two destinations, restrained visual hierarchy, progressive disclosure, visible engine status, no unnecessary dialogs.
+- Follow the GNOME-like minimalism in `PRD.md`: Home, Game and Settings destinations, restrained visual hierarchy, progressive disclosure, visible engine status, no unnecessary dialogs.
 - Never leak review evaluations into Play mode.
 - UI remains usable while analysis runs. Handle stale async responses with request/node IDs.
 

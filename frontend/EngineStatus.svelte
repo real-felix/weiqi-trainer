@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, type State } from './lib';
+  import { ChevronDown } from '@lucide/svelte';
   let {
     appState,
     connected = true,
@@ -38,7 +39,10 @@
           ></span
         >
       {/each}
-      <span class="offline">{connected ? 'Offline by design' : 'Reconnecting…'}</span>
+      <span class="offline" class:reconnecting={!connected}
+        >{connected ? 'Offline by design' : 'Reconnecting…'}</span
+      >
+      <ChevronDown size={16} class="disclosure-icon" aria-hidden="true" />
     </summary>
     <div class="diagnostics">
       {#each workers as [label, worker] (label)}
@@ -74,7 +78,7 @@
     border-top: 1px solid var(--line);
     z-index: 10;
     backdrop-filter: blur(12px);
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   summary {
     display: flex;
@@ -84,9 +88,10 @@
     padding: 10px 34px;
     list-style: none;
     cursor: pointer;
+    font-size: var(--text-xs);
   }
   .engine-label {
-    font-size: 9px;
+    font-size: 0.75rem;
     letter-spacing: 0.13em;
     color: var(--muted);
   }
@@ -102,7 +107,7 @@
   .offline {
     margin-left: auto;
     color: var(--muted);
-    font-size: 10px;
+    font-size: var(--text-xs);
   }
   .status-dot {
     width: 6px;
@@ -133,7 +138,7 @@
   pre {
     max-height: 150px;
     overflow: auto;
-    font-size: 10px;
+    font-size: var(--text-xs);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     background: var(--paper);
@@ -141,7 +146,7 @@
     border-radius: 5px;
   }
   h3 {
-    font-size: 13px;
+    font-size: 1rem;
   }
   .button-row,
   .diagnostic-paths {
@@ -167,8 +172,11 @@
     .offline {
       display: none;
     }
+    .offline.reconnecting {
+      display: inline;
+    }
     .worker-state {
-      font-size: 10px;
+      font-size: var(--text-xs);
     }
     .diagnostics {
       grid-template-columns: 1fr;
