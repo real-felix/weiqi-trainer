@@ -1,0 +1,95 @@
+import type { Game, GameView, State, Evaluation } from './lib';
+export const fixtureGame: Game = {
+  id: 'game',
+  root: 'root',
+  active_head: 'b',
+  human: 'B',
+  rank: -5,
+  mode: 'auto',
+  status: 'playing',
+  result: null,
+  created_at: '2026-10-27T18:00:00Z',
+  updated_at: '2026-10-27T18:00:00Z',
+  resume_heads: [],
+  imported: false,
+  nodes: {
+    root: { id: 'root', parent: null, color: null, point: null, created_at: '0' },
+    a: { id: 'a', parent: 'root', color: 'B', point: 60, created_at: '1' },
+    b: { id: 'b', parent: 'a', color: 'W', point: 300, created_at: '2' },
+    fork: { id: 'fork', parent: 'root', color: 'B', point: 61, created_at: '3' },
+  },
+};
+export const fixtureEvaluation: Evaluation = {
+  score_black: -2,
+  winrate_black: 0.4,
+  visits: 256,
+  candidates: [
+    { point: 61, visits: 256, score_black: -2, winrate_black: 0.4, pv: [61, 62], order: 0 },
+  ],
+  ownership: Array(361).fill(0),
+  engine: 'KataGo fixture',
+  model: 'fixture-model',
+  config: 'fixture-config',
+  parameters: {},
+  created_at: '2026-10-27T18:00:00Z',
+};
+export const fixtureView: GameView = {
+  game: fixtureGame,
+  selected: 'b',
+  position: {
+    board: Array.from({ length: 361 }, (_, i) => (i === 60 ? 1 : i === 300 ? 2 : 0)),
+    turn: 'B',
+    passes: 0,
+    captures: [0, 0],
+  },
+  evaluations: { b: fixtureEvaluation },
+  reviews: [
+    {
+      node: 'a',
+      label: 'Blunder',
+      score_loss: 10,
+      winrate_loss: 0.3,
+      version: 'heuristic-v1',
+      confidence: '256 visits',
+    },
+  ],
+  thinking: false,
+};
+const worker = {
+  state: 'ready',
+  detail: 'Ready',
+  error: null,
+  visits: 0,
+  pid: 1,
+  version: 'Fixture',
+  recent_log: [],
+  supported_ranks: Array.from({ length: 29 }, (_, i) => i - 20),
+};
+export const fixtureState: State = {
+  schema_version: 1,
+  games: [fixtureGame],
+  opponent_rank: -5,
+  initialized: true,
+  data_dir: '/tmp/test',
+  engine: { human: { ...worker }, analysis: { ...worker } },
+  settings: {
+    executable: '/fixture',
+    human_model: '/human',
+    analysis_model: '/strong',
+    config: '/config',
+    quick_visits: 64,
+    deep_visits: 256,
+    timeout_seconds: 120,
+    resignation_enabled: true,
+    resignation_min_moves: 80,
+    resignation_confirmations: 3,
+    resignation_score: 25,
+    resignation_winrate: 0.005,
+    classification: {
+      version: 'heuristic-v1',
+      minimum_visits: 64,
+      score_thresholds: [1.5, 4, 8],
+      winrate_thresholds: [0.04, 0.1, 0.2],
+    },
+  },
+};

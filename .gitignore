@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+.DS_Store
+.serena/
+playwright-report/
+test-results/
+*.sqlite*
+.local/

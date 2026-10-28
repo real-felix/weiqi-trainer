@@ -1,0 +1,10 @@
+node_modules
+target
+dist
+.serena
+.local
+test-results
+playwright-report
+package-lock.json
+Cargo.lock
+tests/fixtures
