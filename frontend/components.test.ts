@@ -88,6 +88,12 @@ it('distinguishes bounded low-confidence analysis from pending work', () => {
   view.selected = 'a';
   view.reviews[0].label = null;
   view.reviews[0].confidence = '32 visits · low confidence · search limit reached';
+  view.reviews.push({
+    ...view.reviews[0],
+    node: 'b',
+    label: 'Good move',
+    confidence: '128 visits · heuristic',
+  });
   view.analysis.queued = 0;
   render(ReviewPanel, {
     view,
@@ -99,9 +105,36 @@ it('distinguishes bounded low-confidence analysis from pending work', () => {
   const progress = screen
     .getByRole('region', { name: 'Your mistakes' })
     .querySelector('.analysis-progress');
-  expect(progress).toHaveTextContent(/0\/1 moves reviewed\s*·\s*1 low confidence/);
+  expect(progress).toHaveTextContent(/1\/2 moves reviewed\s*·\s*1 low confidence/);
   expect(progress).not.toHaveTextContent('Pending');
   expect(screen.getByText('Low confidence', { exact: true })).toBeInTheDocument();
+});
+it('counts both players in review progress while keeping opponent mistakes out of the list', async () => {
+  const view = structuredClone(fixtureView);
+  view.reviews.push({
+    ...view.reviews[0],
+    node: 'b',
+    label: null,
+    confidence: 'Awaiting analysis',
+  });
+  const rendered = render(ReviewPanel, {
+    view,
+    onselect: vi.fn(),
+    oncandidate: vi.fn(),
+    ondeep: vi.fn(),
+    oncancel: vi.fn(),
+  });
+  const mistakes = screen.getByRole('region', { name: 'Your mistakes' });
+  expect(mistakes.querySelector('.analysis-progress')).toHaveTextContent(
+    /1\/2 moves reviewed\s*·\s*1 Pending/,
+  );
+  expect(mistakes.querySelectorAll('.review-list button')).toHaveLength(1);
+  const complete = structuredClone(view);
+  complete.reviews[1].label = 'Blunder';
+  await rendered.rerender({ view: complete });
+  expect(mistakes.querySelector('.analysis-progress')).toHaveTextContent('2/2 moves reviewed');
+  expect(mistakes.querySelector('.analysis-progress')).not.toHaveTextContent('Pending');
+  expect(mistakes.querySelectorAll('.review-list button')).toHaveLength(1);
 });
 it('shows separate human and analyzer failures', () => {
   const appState = structuredClone(fixtureState);

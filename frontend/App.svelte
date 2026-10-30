@@ -694,12 +694,12 @@
             <Board
               board={boardPosition!.board}
               turn={boardPosition!.turn}
-              last={comparing ? null : (selectedNode?.point ?? null)}
+              last={review ? null : (selectedNode?.point ?? null)}
               disabled={isScoring ? busy : !playable}
               scoring={isScoring}
               {dead}
               candidates={suggestions}
-              actual={comparing && selectedNode
+              actual={review && selectedNode
                 ? {
                     point: selectedNode.point,
                     move: currentPath.length - 1,

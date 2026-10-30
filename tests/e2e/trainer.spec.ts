@@ -388,6 +388,12 @@ test('reviews human mistakes before each move and explores corrections without c
       const row = data.reviews.find((row: { node: string }) => row.node === ids[index]);
       Object.assign(row, { label, score_loss: loss, confidence: '256 visits' });
     }
+    const branchLabels: Record<number, string> = { 61: 'AI move', 300: 'Inaccuracy', 62: 'Good move', 18: 'Mistake' };
+    for (const row of data.reviews) {
+      const node = data.game.nodes[row.node];
+      if (!ids.includes(node.id) && node.point !== null && branchLabels[node.point])
+        Object.assign(row, { label: branchLabels[node.point], confidence: '256 visits' });
+    }
     await route.fulfill({ json: data });
   });
   await page.goto(`/#game/${created.id}`);
@@ -420,11 +426,15 @@ test('reviews human mistakes before each move and explores corrections without c
   await mistakes.getByRole('button', { name: /1\. D16/ }).click();
   await page.getByRole('gridcell', { name: 'E16, suggestion A, empty' }).click();
   await expect(page.getByRole('region', { name: 'Explored position' })).toContainText('Original');
-  await expect(page.getByRole('gridcell', { name: 'E16, black stone' })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'E16, played move 1, AI move' })).toBeVisible();
+  await expect(page.locator('circle.actual-move')).toHaveAttribute('fill', '#3069ad');
+  await expect(page.locator('circle.actual-move + text')).toHaveText('1');
   await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Last move', exact: true }).click();
   await expect(page.locator('.history-controls > span')).toHaveText('3/6');
-  await expect(page.getByRole('gridcell', { name: 'F16, black stone' })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'F16, played move 3, Good move' })).toBeVisible();
+  await expect(page.locator('circle.actual-move')).toHaveAttribute('fill', '#287647');
+  await expect(page.locator('circle.actual-move + text')).toHaveText('3');
   await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Previous move', exact: true }).click();
   await page.getByRole('button', { name: 'Previous move', exact: true }).click();
@@ -432,14 +442,16 @@ test('reviews human mistakes before each move and explores corrections without c
   await expect(page.locator('.history-controls > span')).toHaveText('0/6');
   await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Next move', exact: true }).click();
-  await expect(page.getByRole('gridcell', { name: 'E16, black stone' })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'E16, played move 1, AI move' })).toBeVisible();
   await page.getByRole('button', { name: 'Next move', exact: true }).click();
-  await expect(page.getByRole('gridcell', { name: 'Q4, white stone' })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'Q4, played move 2, Inaccuracy' })).toBeVisible();
+  await expect(page.locator('circle.actual-move')).toHaveAttribute('fill', '#8b6500');
   await page.getByRole('gridcell', { name: 'T19, empty' }).click();
-  await expect(page.getByRole('gridcell', { name: 'T19, black stone' })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'T19, played move 3, Mistake' })).toBeVisible();
+  await expect(page.locator('circle.actual-move')).toHaveAttribute('fill', '#a64c10');
   await page.getByRole('button', { name: 'Previous move', exact: true }).click();
   await page.getByRole('button', { name: 'Next move', exact: true }).click();
-  await expect(page.getByRole('gridcell', { name: 'T19, black stone' })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'T19, played move 3, Mistake' })).toBeVisible();
   await page.getByRole('button', { name: 'Return to played game', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toBeVisible();
   await expect(page.getByRole('gridcell', { name: 'D16, played move 1, Blunder' })).toBeVisible();
@@ -451,7 +463,7 @@ test('reviews human mistakes before each move and explores corrections without c
   await page.getByRole('button', { name: /Try E16/ }).click();
   await expect(page.getByRole('region', { name: 'Explored position' })).toBeVisible();
   await page.getByRole('button', { name: 'Last move', exact: true }).click();
-  await expect(page.getByRole('gridcell', { name: 'F16, black stone' })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'F16, played move 3, Good move' })).toBeVisible();
   expect(moveWrites).toBe(writesBeforeReuse);
   await page.getByRole('button', { name: 'Return to played game', exact: true }).click();
   const persisted = await (await request.get(`/api/games/${created.id}`)).json();

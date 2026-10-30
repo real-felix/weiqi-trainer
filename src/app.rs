@@ -219,14 +219,14 @@ impl App {
             let settings = repo.settings()?;
             let evaluations = repo.evaluations(id)?;
             let mut jobs = vec![];
-            for node in game.path(&game.active_head)? {
+            for node in game.nodes.values() {
                 if evaluations
                     .get(&node.id)
                     .is_none_or(|evaluation| evaluation.visits < settings.quick_visits)
                 {
                     jobs.push((node.id.clone(), settings.quick_visits));
                 }
-                if node.color == Some(game.human)
+                if node.color.is_some()
                     && let Some(parent) = &node.parent
                 {
                     let before = evaluations.get(parent);
@@ -385,7 +385,7 @@ impl App {
                         && let Ok(node) = current.add_opponent(&g.active_head, point)
                     {
                         let _ = repo.save(&current);
-                        app.enqueue(&g.id, &g.active_head, s.quick_visits, false);
+                        app.enqueue(&g.id, &g.active_head, s.deep_visits, false);
                         app.enqueue(&g.id, &node, s.quick_visits, false);
                     }
                 }
@@ -842,6 +842,87 @@ mod tests {
         .await
         .expect("background review did not finish without another UI request");
         app.engine.shutdown().await;
+    }
+    #[test]
+    fn review_recovers_missing_analysis_for_both_players_and_existing_branches() {
+        let mut repo = Repository::open(Path::new(":memory:")).unwrap();
+        let mut game = Game::new(Color::B, -5, "auto".into());
+        let root = game.root.clone();
+        let human = game.add(&root, Some(60), false).unwrap();
+        let bot = game.add_opponent(&human, Some(300)).unwrap();
+        let branch_human = game.add(&root, Some(61), true).unwrap();
+        let branch_bot = game.add(&branch_human, Some(301), true).unwrap();
+        repo.save(&game).unwrap();
+        let app = App::new(repo, "test".into());
+        app.prepare_review(&game.id).unwrap();
+        app.prepare_review(&game.id).unwrap();
+        let queue = app.queue.lock().unwrap();
+        assert_eq!(queue.len(), 5);
+        for id in [&root, &human, &branch_human] {
+            assert_eq!(
+                queue.iter().find(|job| &job.node == id).unwrap().visits,
+                256
+            );
+        }
+        for id in [&bot, &branch_bot] {
+            assert_eq!(queue.iter().find(|job| &job.node == id).unwrap().visits, 64);
+        }
+        drop(queue);
+        let saved = app.repo.lock().unwrap().game(&game.id).unwrap();
+        assert_eq!(saved.active_head, bot);
+        assert_eq!(saved.nodes.len(), 5);
+    }
+    #[tokio::test]
+    async fn bot_reply_starts_cached_analysis_for_both_players_without_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("spread-visits.json");
+        std::fs::write(&model, r#"{"candidate_visit_divisor":16}"#).unwrap();
+        let settings = Settings {
+            executable: format!("{}/tests/fake_katago.py", env!("CARGO_MANIFEST_DIR")),
+            human_model: model.to_string_lossy().into(),
+            analysis_model: model.to_string_lossy().into(),
+            config: format!("{}/config/analysis.cfg", env!("CARGO_MANIFEST_DIR")),
+            ..Default::default()
+        };
+        let db = dir.path().join("trainer.sqlite3");
+        let mut repo = Repository::open(&db).unwrap();
+        repo.save_settings(&settings).unwrap();
+        let mut game = Game::new(Color::B, -5, "auto".into());
+        let root = game.root.clone();
+        let human = game.add(&root, Some(60), false).unwrap();
+        repo.save(&game).unwrap();
+        let app = App::new(repo, "test".into());
+        app.background();
+        app.kick(&game.id);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let view = app.view(&game.id, None).unwrap();
+                if view.game.nodes.len() == 3
+                    && view.evaluations.len() == 3
+                    && view.reviews.iter().all(|review| review.label.is_some())
+                    && !view.analysis.running
+                    && view.analysis.queued == 0
+                {
+                    assert!(view.evaluations[&root].candidates[0].visits >= 64);
+                    assert!(view.evaluations[&human].candidates[0].visits >= 64);
+                    assert!(view.evaluations[&view.game.active_head].visits >= 64);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("both players must be analyzed without any Review request");
+        app.engine.shutdown().await;
+        let restarted = App::new(Repository::open(&db).unwrap(), "test".into());
+        restarted.prepare_review(&game.id).unwrap();
+        let cached = restarted.view(&game.id, None).unwrap();
+        assert_eq!(cached.evaluations.len(), 3);
+        assert!(cached.reviews.iter().all(|review| review.label.is_some()));
+        assert_eq!(
+            cached.analysis.queued, 0,
+            "cached analyses must be reused after restart"
+        );
     }
     #[test]
     fn review_refinement_is_bounded_and_does_not_requeue_low_confidence_forever() {

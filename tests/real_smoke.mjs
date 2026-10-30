@@ -37,6 +37,12 @@ try {
   const id=page.url().split('/').pop();let view;const deadline=Date.now()+30000;
   do {await pause(100);view=await request(`/games/${id}`);} while((Object.keys(view.game.nodes).length<3 || view.thinking) && Date.now()<deadline);
   assert.equal(Object.keys(view.game.nodes).length,3);assert.equal(view.position.turn,'B');
+  // Both moves must be evaluated and classified without entering Review first.
+  const played=Object.values(view.game.nodes).filter(node=>node.color!==null).map(node=>node.id);
+  await expect.poll(async()=> {
+    const current=await request(`/games/${id}`);
+    return played.filter(node=>current.evaluations[node] && current.reviews.some(review=>review.node===node && review.label)).length;
+  },{timeout:60000}).toBe(2);
   await expect(page.locator('.navbar-game').getByText('Your turn',{exact:true})).toBeVisible();
   await expect(page.locator('svg.board circle[fill="url(#black)"]')).toHaveCount(1);
   await expect(page.locator('svg.board circle[fill="url(#white)"]')).toHaveCount(1);
@@ -50,7 +56,7 @@ try {
   const point=Array.from({length:361},(_,point)=>point).find(point=>!suggestions.has(point) && !Object.values(view.game.nodes).some(node=>node.parent===view.game.root && node.point===point));
   const location='ABCDEFGHJKLMNOPQRST'[point%19]+(19-Math.floor(point/19));
   await page.getByRole('gridcell',{name:`${location}, empty`,exact:true}).click();
-  await expect(page.getByRole('gridcell',{name:`${location}, black stone`,exact:true})).toBeVisible();
+  await expect(page.getByRole('gridcell',{name:new RegExp(`${location}, played move 1,`)})).toBeVisible();
   await page.getByRole('heading',{name:'Your mistakes'}).waitFor();
   await page.getByText('Black win probability',{exact:true}).waitFor({timeout:30000});
   view=await request(`/games/${id}`);assert.equal(view.game.active_head,active);assert.equal(Object.keys(view.game.nodes).length,4);
@@ -60,5 +66,5 @@ try {
   await page.close();await browser.close();browser=null;
   await stop();await start();view=await request(`/games/${id}`);
   assert.equal(view.game.active_head,active);assert.equal(Object.keys(view.game.nodes).length,4);assert.equal(view.game.result,null);assert.ok(Object.keys(view.evaluations).length>0);assert.deepEqual(errors,[]);
-  console.log('PASS: real human SL game, review branch, analysis, and persistence across backend restart');
+  console.log('PASS: real human SL game, automatic analysis of both players before Review, review branch, and persistence across backend restart');
 } finally {if(browser) await browser.close();await stop();await rm(data,{recursive:true,force:true});}

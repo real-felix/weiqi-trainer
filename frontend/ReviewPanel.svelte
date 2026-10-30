@@ -40,8 +40,8 @@
   const played = $derived(path(view.game.nodes, view.game.active_head));
   const reviewed = $derived(new Map(view.reviews.map((review) => [review.node, review])));
   const move = $derived(path(view.game.nodes, view.selected).length - 1);
-  const humanMoves = $derived(played.filter((node) => node.color === view.game.human));
-  const unresolved = $derived(humanMoves.filter((node) => !reviewed.get(node.id)?.label));
+  const moves = $derived(played.filter((node) => node.color !== null));
+  const unresolved = $derived(moves.filter((node) => !reviewed.get(node.id)?.label));
   const lowConfidence = $derived(
     unresolved.filter((node) => reviewed.get(node.id)?.confidence.includes('search limit reached'))
       .length,
@@ -191,7 +191,7 @@
           class="spinner"
           aria-hidden="true"
         /> Analyzing ·
-      {/if}{humanMoves.length - unresolved.length}/{humanMoves.length} moves reviewed{#if pending}
+      {/if}{moves.length - unresolved.length}/{moves.length} moves reviewed{#if pending}
         · {pending} Pending{/if}{#if lowConfidence}
         · {lowConfidence} low confidence{/if}
     </p>
