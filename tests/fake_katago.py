@@ -4,6 +4,15 @@ import json
 import sys
 import time
 
+# A test model can spread visits across candidates to exercise review refinement.
+candidate_visit_divisor=1
+if '-model' in sys.argv:
+    try:
+        with open(sys.argv[sys.argv.index('-model')+1]) as model:
+            candidate_visit_divisor=json.load(model).get('candidate_visit_divisor',1)
+    except (OSError,ValueError):
+        pass
+
 if 'version' in sys.argv:
     print('KataGo protocol fixture\nUsing deterministic test backend')
     sys.exit(0)
@@ -29,6 +38,6 @@ for line in sys.stdin:
     policy=[-1. if s else 0. for s in board]+[0.]
     # Human policy deliberately never passes: search-based ending must override it.
     policy[preferred]=1.
-    candidates=[dict(move=move,visits=visits,scoreLead=-2.,winrate=.45,pv=[move],order=0)]
+    candidates=[dict(move=move,visits=max(1,visits//candidate_visit_divisor),scoreLead=-2.,winrate=.45,pv=[move],order=0)]
     if q.get('includePolicy'):time.sleep(.12)
     print(json.dumps(dict(id=q['id'],isDuringSearch=False,rootInfo=dict(visits=visits,scoreLead=-2.,scoreStdev=10.,winrate=.45),moveInfos=candidates,humanPolicy=policy,ownership=[1. if s==1 else -1. if s==2 else 0. for s in board])),flush=True)

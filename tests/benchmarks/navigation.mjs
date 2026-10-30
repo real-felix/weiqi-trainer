@@ -62,9 +62,7 @@ try {
   for (let i = 0; i < 3; i++) {
     const open = await page.evaluate(async (gameId) => {
       const button = Array.from(document.querySelectorAll('.game-row')).find(
-        (element) =>
-          element.textContent.includes('vs Human SL') &&
-          element.closest('[aria-label="Review games"]'),
+        (element) => element.dataset.gameId === gameId,
       );
       if (!button) throw new Error(`Review card missing for ${gameId}`);
       const start = performance.now();
@@ -85,7 +83,7 @@ try {
     samples.push({ review_ms: Math.round(open), home_ms: Math.round(home) });
   }
   // A click arriving during an analysis refresh must not wait for a long render.
-  await page.getByRole('region', { name: 'Review games' }).locator('.game-row').first().click();
+  await page.locator(`[data-game-id="${view.game.id}"]`).click();
   await page.locator('.review-panel').waitFor();
   const refreshHome = await page.evaluate(async () => {
     const start = performance.now();

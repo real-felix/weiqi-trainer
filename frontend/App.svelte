@@ -14,12 +14,15 @@
     ChevronRight,
     ChevronsLeft,
     ChevronsRight,
+    Undo2,
     LoaderCircle,
     Download,
   } from '@lucide/svelte';
   import { watchLiveUpdates } from './live-updates';
+  import { correction, originalMove, orderedCandidates } from './review';
   import {
     api,
+    colors,
     rankLabel,
     ranks,
     path,
@@ -38,6 +41,8 @@
   let selected = $state<string | null>(null);
   let follow = $state(true);
   let mode = $state<'play' | 'review'>('play');
+  let exploration = $state.raw<{ origin: string; line: string[] } | null>(null);
+  let variationsOpen = $state(false);
   let settingsPage = $state(false);
   let newGameOpen = $state(false);
   let difficultyMode = $state('auto');
@@ -63,7 +68,9 @@
   const isScoring = $derived(!!view && view.game.status === 'scoring' && active && !review);
   const selectedNode = $derived(view?.game.nodes[view.selected]);
   const currentPath = $derived(view ? path(view.game.nodes, view.selected) : []);
-  const totalMoves = $derived(view ? path(view.game.nodes, view.game.active_head).length - 1 : 0);
+  const playedPath = $derived(view ? path(view.game.nodes, view.game.active_head) : []);
+  const totalMoves = $derived(playedPath.length - 1);
+  const canReturn = $derived(!!view && !active);
   const playable = $derived(
     !!view &&
       !busy &&
@@ -73,6 +80,19 @@
           view.position.turn === view.game.human)),
   );
   const evaluation = $derived(view?.evaluations[view.selected]);
+  const focus = $derived(view ? correction(view) : null);
+  const comparing = $derived(
+    review && !exploration && !!view?.previous_position && !!selectedNode?.parent,
+  );
+  const boardPosition = $derived(comparing ? view!.previous_position! : view?.position);
+  const suggestions = $derived(
+    review && view
+      ? (comparing
+          ? (focus?.alternatives ?? [])
+          : orderedCandidates(evaluation?.candidates ?? [], view.position.turn)
+        ).slice(0, 5)
+      : [],
+  );
 
   function showError(value: unknown) {
     error = (value as Error).message;
@@ -127,6 +147,8 @@
     selected = null;
     follow = true;
     mode = 'play';
+    exploration = null;
+    variationsOpen = false;
     dead = [];
     scoring = null;
     error = '';
@@ -134,7 +156,7 @@
     navVersion++;
     setLocation(`#game/${id}`);
     await loadGame();
-    if (view && review) queueAnalysis();
+    if (view && review) queueAnalysis(true);
   }
   function home() {
     settingsPage = false;
@@ -163,7 +185,16 @@
     event.preventDefault();
     action();
   }
-  async function selectNode(id: string) {
+  async function selectNode(id: string, preserveExploration = false) {
+    if (review && view && !(preserveExploration && exploration)) {
+      const played = path(view.game.nodes, view.game.active_head).some((node) => node.id === id);
+      if (played) exploration = null;
+      else if (!exploration?.line.includes(id))
+        exploration = {
+          origin: originalMove(view, id),
+          line: path(view.game.nodes, id).map((node) => node.id),
+        };
+    }
     selected = id;
     follow = false;
     navVersion++;
@@ -171,21 +202,31 @@
     await loadGame();
     if (review) queueAnalysis();
   }
-  function queueAnalysis() {
+  function queueAnalysis(prepareReview = false) {
     if (view)
-      void api(`/games/${view.game.id}/analysis`, { node: view.selected, deep: true }).catch((e) =>
-        showError(e),
-      );
+      void api(`/games/${view.game.id}/analysis`, {
+        node: view.selected,
+        deep: true,
+        prepare_review: prepareReview,
+      }).catch((e) => showError(e));
   }
   async function switchMode(next: 'play' | 'review') {
     mode = next;
-    if (next === 'review') queueAnalysis();
+    if (next === 'review') queueAnalysis(true);
     else {
+      exploration = null;
       dead = [];
       scoring = null;
     }
   }
   async function toActive() {
+    if (review && exploration) {
+      const origin = exploration.origin;
+      exploration = null;
+      await selectNode(origin);
+      return;
+    }
+    exploration = null;
     follow = true;
     navVersion++;
     await loadGame();
@@ -193,9 +234,17 @@
   }
   function navigate(direction: number) {
     if (!view) return;
+    if (direction > 0 && exploration) {
+      const index = exploration.line.indexOf(view.selected);
+      const next = exploration.line[index + 1];
+      if (index >= 0 && next) {
+        void selectNode(next, true);
+        return;
+      }
+    }
     if (direction < 0) {
       const parent = view.game.nodes[view.selected].parent;
-      if (parent) void selectNode(parent);
+      if (parent) void selectNode(parent, !!exploration);
     } else {
       const activePath = path(view.game.nodes, view.game.active_head);
       const i = activePath.findIndex((n) => n.id === view!.selected);
@@ -205,8 +254,24 @@
           : Object.values(view.game.nodes)
               .filter((n) => n.parent === view!.selected)
               .sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
-      if (next) void selectNode(next.id);
+      if (next) void selectNode(next.id, !!exploration);
     }
+  }
+  function toLineEnd() {
+    if (!view) return;
+    let end = exploration?.line.at(-1) ?? view.selected;
+    if (!exploration && playedPath.some((node) => node.id === end)) {
+      end = view.game.active_head;
+    } else {
+      const children: Record<string, string> = {};
+      for (const node of Object.values(view.game.nodes).sort((a, b) =>
+        a.created_at.localeCompare(b.created_at),
+      )) {
+        if (node.parent && !children[node.parent]) children[node.parent] = node.id;
+      }
+      while (children[end]) end = children[end];
+    }
+    if (end !== view.selected) void selectNode(end, !!exploration);
   }
   function keyboard(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
@@ -251,6 +316,17 @@
       busy = false;
     }
   }
+  async function followExistingMove(parent: string, point: number | null) {
+    if (!view) return false;
+    const existing = Object.values(view.game.nodes).find(
+      (node) => node.parent === parent && node.point === point,
+    );
+    if (!existing) return false;
+    if (comparing && existing.id === view.selected) {
+      if (!active) navigate(1);
+    } else await selectNode(existing.id);
+    return true;
+  }
   async function play(point: number | null) {
     if (!view || busy) return;
     if (isScoring && point !== null) {
@@ -264,19 +340,38 @@
       return;
     }
     if (!playable) return;
+    const parent = comparing ? selectedNode!.parent! : view.selected;
+    if (review) {
+      if (await followExistingMove(parent, point)) return;
+      const candidate = suggestions.find((candidate) => candidate.point === point);
+      if (candidate) {
+        await candidateLine(candidate);
+        return;
+      }
+    }
+    const origin = exploration?.origin ?? view.selected;
+    const game = view.game.id;
+    const revision = navVersion;
     busy = true;
     error = '';
     try {
       const result = await api<{ node: string }>(`/games/${view.game.id}/moves`, {
-        parent: view.selected,
+        parent,
         point,
         review,
         expected_head: view.game.active_head,
       });
+      if (gameId !== game || revision !== navVersion) return;
       selected = result.node;
+      if (review)
+        exploration = {
+          origin,
+          line: [...path(view!.game.nodes, parent).map((node) => node.id), result.node],
+        };
       follow = !review;
       navVersion++;
       await loadGame();
+      if (review) queueAnalysis();
     } catch (e) {
       showError(e);
     } finally {
@@ -320,27 +415,33 @@
   }
   async function candidateLine(candidate: Candidate) {
     if (!view || busy) return;
+    const parent = comparing ? selectedNode!.parent! : view.selected;
+    if (await followExistingMove(parent, candidate.point)) return;
     busy = true;
     error = '';
     const id = view.game.id;
-    let parent = view.selected;
+    const origin = exploration?.origin ?? view.selected;
+    const line: string[] = [];
+    const revision = ++navVersion;
     try {
-      for (const point of candidate.pv.slice(0, 12)) {
-        const result = await api<{ node: string }>(`/games/${id}/moves`, {
-          parent,
-          point,
-          review: true,
-        });
-        parent = result.node;
-      }
-      selected = parent;
+      const result = await api<{ nodes: string[] }>(`/games/${id}/variations`, {
+        parent,
+        points: candidate.pv.length ? candidate.pv : [candidate.point],
+      });
+      line.push(...result.nodes);
+      if (id !== gameId || revision !== navVersion) return;
+      exploration = {
+        origin,
+        line: [...path(view!.game.nodes, parent).map((node) => node.id), ...line],
+      };
+      selected = line[0] ?? parent;
       follow = false;
       navVersion++;
       await loadGame();
+      queueAnalysis();
     } catch (e) {
+      if (id !== gameId || revision !== navVersion) return;
       showError(e);
-      selected = parent;
-      follow = false;
       await loadGame();
     } finally {
       busy = false;
@@ -400,6 +501,15 @@
       input.value = '';
     }
   }
+  function alignBoard(element: HTMLElement) {
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      element.parentElement?.style.setProperty('--board-width', `${Math.min(width, height)}px`);
+    });
+    observer.observe(element);
+    return { destroy: () => observer.disconnect() };
+  }
   onMount(() => {
     void loadState();
     const stopUpdates = watchLiveUpdates({
@@ -435,13 +545,19 @@
     >
     {#if gameId && view}
       <div class="navbar-game">
-        <div>
-          <h1>
-            {view.game.imported ? 'Imported game' : `Human SL ${rankLabel(view.game.rank)}`}
-            <span class="versus">·</span>
-            <span class="game-you">You play {view.game.human === 'B' ? 'Black' : 'White'}</span>
-          </h1>
-        </div>
+        <h1>
+          {view.game.imported ? 'Imported game' : `Human SL ${rankLabel(view.game.rank)}`}
+          <span class="versus" aria-hidden="true">·</span>
+          <span class="game-turn">
+            <span
+              class="mini-stone"
+              class:white={boardPosition!.turn === 'W'}
+              role="img"
+              aria-label={`${boardPosition!.turn === 'B' ? 'Black' : 'White'} stone`}
+            ></span>
+            {boardPosition!.turn === view.game.human ? 'Your turn' : 'Your opponent'}
+          </span>
+        </h1>
         <div class="mode-switch" aria-label="Game mode">
           {#if !view.game.result}<button
               class:chosen={!review}
@@ -572,27 +688,25 @@
     </main>
   {:else}
     <main class="game-main">
-      <div class="workspace">
+      <div class="workspace" class:review-mode={review}>
         <section class="board-column" aria-label="Go game">
-          <div class="board-topline">
-            <span
-              ><span class="mini-stone" class:white={view.position.turn === 'W'}></span>{view.game
-                .result
-                ? `Result · ${view.game.result}`
-                : isScoring
-                  ? 'Confirm stone status'
-                  : `${view.position.turn === 'B' ? 'Black' : 'White'} to move`}</span
-            ><span>Move {currentPath.length - 1}/{totalMoves} <i>·</i> 19 × 19 <i>·</i> AGA</span>
-          </div>
-          <div class="board-area">
+          <div class="board-area" use:alignBoard>
             <Board
-              board={view.position.board}
-              turn={view.position.turn}
-              last={selectedNode?.point ?? null}
+              board={boardPosition!.board}
+              turn={boardPosition!.turn}
+              last={comparing ? null : (selectedNode?.point ?? null)}
               disabled={isScoring ? busy : !playable}
               scoring={isScoring}
               {dead}
-              candidates={review ? (evaluation?.candidates ?? []) : []}
+              candidates={suggestions}
+              actual={comparing && selectedNode
+                ? {
+                    point: selectedNode.point,
+                    move: currentPath.length - 1,
+                    color: colors[focus?.review?.label ?? ''] ?? '#697061',
+                    label: focus?.review?.label ?? 'Pending',
+                  }
+                : null}
               onplay={(p) => void play(p)}
             />
           </div>
@@ -614,30 +728,27 @@
                 >{currentPath.length - 1}/{totalMoves}</span
               ><button onclick={() => navigate(1)} aria-label="Next move" title="Next move (→)"
                 ><ChevronRight size={21} aria-hidden="true" /></button
-              ><button
-                onclick={toActive}
-                aria-label="Return to active continuation"
-                title="Active continuation (End)"
+              ><button onclick={toLineEnd} aria-label="Last move" title="End of current line"
                 ><ChevronsRight size={21} aria-hidden="true" /></button
               >
             </div>
-            <button class="text-button" onclick={toActive}>Return to active line</button>
+            {#if canReturn}
+              <button
+                class="return-to-game"
+                onclick={toActive}
+                aria-label={review ? 'Return to played game' : 'Return to active continuation'}
+                title={review ? 'Return to played game (End)' : 'Return to active line (End)'}
+                ><Undo2 size={21} aria-hidden="true" /></button
+              >
+            {/if}
           </div>
         </section>
         <aside class="game-sidebar" class:reviewing={review}>
           <div class="sidebar-content">
             {#if !review}
               <section class="turn-panel">
-                <p class="eyebrow">
-                  {isScoring
-                    ? 'TWO PASSES'
-                    : view.thinking
-                      ? 'OPPONENT’S TURN'
-                      : view.position.turn === view.game.human
-                        ? 'YOUR TURN'
-                        : 'OPPONENT’S TURN'}
-                </p>
                 {#if isScoring}
+                  <p class="eyebrow">TWO PASSES</p>
                   <h2>Settle the board.</h2>
                   <p class="muted small">
                     Agree on dead stones, then confirm the final score. Resume play if either side
@@ -708,31 +819,50 @@
               </section>
             {:else}<ReviewPanel
                 {view}
+                origin={exploration?.origin ?? null}
                 onselect={(id) => void selectNode(id)}
                 oncandidate={(c) => void candidateLine(c)}
-                ondeep={queueAnalysis}
+                ondeep={() => queueAnalysis()}
                 oncancel={() => void api(`/games/${gameId}/analysis/cancel`, {})}
               />{/if}
-            <section class="variation-panel">
-              <div class="section-heading">
-                <h2>Variations</h2>
-                <span class="small muted">{Object.keys(view.game.nodes).length - 1} moves</span>
-              </div>
-              <History
-                game={view.game}
-                selected={view.selected}
-                {review}
-                reviews={view.reviews}
-                onselect={(id) => void selectNode(id)}
-              />
-            </section>
+            {#if review}
+              <details class="variation-panel compact" bind:open={variationsOpen}>
+                <summary
+                  >Variations <span class="small muted"
+                    >{Object.keys(view.game.nodes).length - 1} moves</span
+                  ></summary
+                >
+                <History
+                  game={view.game}
+                  selected={view.selected}
+                  {review}
+                  reviews={view.reviews}
+                  visible={variationsOpen}
+                  onselect={(id) => void selectNode(id)}
+                />
+              </details>
+            {:else}
+              <section class="variation-panel">
+                <div class="section-heading">
+                  <h2>Variations</h2>
+                  <span class="small muted">{Object.keys(view.game.nodes).length - 1} moves</span>
+                </div>
+                <History
+                  game={view.game}
+                  selected={view.selected}
+                  {review}
+                  reviews={view.reviews}
+                  onselect={(id) => void selectNode(id)}
+                />
+              </section>
+            {/if}
           </div>
-          <div class="game-metadata">
-            <span>Captures · B {view.position.captures[0]} / W {view.position.captures[1]}</span><a
-              href={`/api/games/${gameId}/sgf`}
-              download><Download size={16} aria-hidden="true" /> Export SGF</a
-            >
-          </div>
+          {#if !review}<div class="game-metadata">
+              <span>Captures · B {view.position.captures[0]} / W {view.position.captures[1]}</span
+              ><a href={`/api/games/${gameId}/sgf`} download
+                ><Download size={16} aria-hidden="true" /> Export SGF</a
+              >
+            </div>{/if}
         </aside>
       </div>
     </main>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { coordinate, type Candidate } from './lib';
+  import { suggestionColor } from './review';
   let {
     board,
     turn = 'B',
@@ -8,6 +9,7 @@
     scoring = false,
     dead = [],
     candidates = [],
+    actual = null,
     onplay,
   }: {
     board: number[];
@@ -17,6 +19,7 @@
     scoring?: boolean;
     dead?: number[];
     candidates?: Candidate[];
+    actual?: { point: number | null; move: number; color: string; label: string } | null;
     onplay: (point: number) => void;
   } = $props();
   let cursor = $state(60);
@@ -86,7 +89,8 @@
           r="3.5"
           fill="#59492f"
         />{/each}{/each}
-    {#each board as stone, p (p)}
+    {#each board as placedStone, p (p)}
+      {@const stone = placedStone || (actual?.point === p ? (turn === 'B' ? 1 : 2) : 0)}
       {#if stone}
         <circle cx={x(p) + 1} cy={y(p) + 2} r="14.9" fill="#604c33" opacity="0.23" />
         <circle
@@ -113,33 +117,52 @@
           />{/if}
       {/if}
     {/each}
+    {#if hovered !== null && !board[hovered] && !disabled && !scoring && actual?.point !== hovered}
+      <circle
+        class="phantom-stone"
+        cx={x(hovered)}
+        cy={y(hovered)}
+        r="14.5"
+        fill={turn === 'B' ? '#252821' : '#fffdf3'}
+        opacity="0.35"
+      />
+    {/if}
     {#each candidates.slice(0, 5) as c, i (i)}
       {#if c.point !== null && !board[c.point]}
         <circle
           cx={x(c.point)}
           cy={y(c.point)}
           r="12"
-          fill={i === 0 ? '#3069ad' : '#e9eee5'}
-          stroke="#3069ad"
+          fill={i === 0 ? '#c2daf7' : '#cae2c6'}
+          fill-opacity="0.95"
+          stroke={suggestionColor(i)}
         />
         <text
           x={x(c.point)}
           y={y(c.point) + 4.5}
           text-anchor="middle"
-          fill={i === 0 ? '#fff' : '#285184'}
+          fill="#000"
           font-size="13"
           font-weight="600">{String.fromCharCode(65 + i)}</text
         >
       {/if}
     {/each}
-    {#if hovered !== null && !board[hovered] && !disabled && !scoring}
+    {#if actual?.point != null}
       <circle
-        cx={x(hovered)}
-        cy={y(hovered)}
-        r="14"
-        fill={turn === 'B' ? '#252821' : '#fffdf3'}
-        opacity="0.35"
+        class="actual-move"
+        cx={x(actual.point)}
+        cy={y(actual.point)}
+        r="12"
+        fill={actual.color}
       />
+      <text
+        x={x(actual.point)}
+        y={y(actual.point) + 4.5}
+        text-anchor="middle"
+        fill="white"
+        font-size="12"
+        font-weight="600">{actual.move}</text
+      >
     {/if}
   </svg>
   <div
@@ -157,7 +180,7 @@
             type="button"
             role="gridcell"
             tabindex={cursor === p ? 0 : -1}
-            aria-label={`${coordinate(p)}, ${board[p] === 1 ? 'black stone' : board[p] === 2 ? 'white stone' : 'empty'}${dead.includes(p) ? ', marked dead' : ''}`}
+            aria-label={`${coordinate(p)}, ${actual?.point === p ? `played move ${actual.move}, ${actual.label}` : candidates.some((candidate) => candidate.point === p) ? `suggestion ${String.fromCharCode(65 + candidates.findIndex((candidate) => candidate.point === p))}, empty` : board[p] === 1 ? 'black stone' : board[p] === 2 ? 'white stone' : 'empty'}${dead.includes(p) ? ', marked dead' : ''}`}
             aria-disabled={disabled || (!scoring && !!board[p])}
             aria-selected={last === p}
             onkeydown={(e) => key(e, p)}

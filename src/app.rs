@@ -1,3 +1,4 @@
+use crate::settings::Settings;
 use crate::{
     domain::*,
     engine::{Engine, Evaluation},
@@ -13,6 +14,31 @@ use std::{
     },
 };
 use tokio::sync::{Notify, broadcast};
+
+fn review_visit_limit(settings: &Settings) -> u32 {
+    settings.deep_visits.max(4096)
+}
+
+fn review_budget(evaluation: Option<&Evaluation>, settings: &Settings) -> Option<u32> {
+    let minimum = settings.classification.minimum_visits;
+    if evaluation.is_some_and(|evaluation| {
+        evaluation.visits >= minimum
+            && evaluation
+                .candidates
+                .first()
+                .is_some_and(|best| best.visits >= minimum)
+    }) {
+        return None;
+    }
+    let visits = evaluation.map_or(0, |evaluation| evaluation.visits);
+    let limit = review_visit_limit(settings);
+    (visits < limit).then(|| {
+        settings
+            .deep_visits
+            .max(visits.saturating_mul(2))
+            .min(limit)
+    })
+}
 
 #[derive(Clone)]
 pub struct Job {
@@ -45,10 +71,19 @@ pub struct MoveReview {
 pub struct GameView {
     pub game: Game,
     pub position: Position,
+    pub previous_position: Option<Position>,
     pub selected: String,
     pub evaluations: BTreeMap<String, Evaluation>,
     pub reviews: Vec<MoveReview>,
     pub thinking: bool,
+    pub analysis: AnalysisProgress,
+}
+#[derive(Serialize)]
+pub struct AnalysisProgress {
+    pub completed: usize,
+    pub total: usize,
+    pub queued: usize,
+    pub running: bool,
 }
 impl App {
     pub fn new(repo: Repository, data_dir: String) -> Arc<Self> {
@@ -80,7 +115,7 @@ impl App {
         cache.insert(id, head, preview.clone());
         Ok(preview)
     }
-    pub fn enqueue(&self, game: &str, node: &str, visits: u32, priority: bool) {
+    pub fn enqueue(&self, game: &str, node: &str, mut visits: u32, priority: bool) {
         {
             let running = self.running.lock().unwrap();
             if running
@@ -92,13 +127,14 @@ impl App {
         }
         let mut q = self.queue.lock().unwrap();
         if let Some(existing) = q.iter_mut().find(|j| j.game == game && j.node == node) {
-            existing.visits = existing.visits.max(visits);
+            visits = existing.visits.max(visits);
+            existing.visits = visits;
             if !priority {
                 return;
             }
         }
         if priority {
-            q.retain(|j| !(j.game == game && (j.node == node || j.priority)));
+            q.retain(|j| !(j.game == game && j.node == node));
         } else if q.iter().any(|j| j.game == game && j.node == node) {
             return;
         }
@@ -134,6 +170,96 @@ impl App {
         self.queue.lock().unwrap().retain(|j| j.game != game);
         self.engine.cancel_analysis();
         self.changed();
+    }
+    pub fn enqueue_review(&self, game: &str, node: &str, parent: Option<&str>, visits: u32) {
+        let running = self.running.lock().unwrap().clone();
+        let targets: Vec<_> = [Some(node), parent].into_iter().flatten().collect();
+        let mut queue = self.queue.lock().unwrap();
+        // Keep unfinished work when selection changes, but move the comparison pair ahead of it.
+        for job in queue.iter_mut().filter(|job| job.game == game) {
+            job.priority = false;
+        }
+        for target in &targets {
+            let mut budget = visits;
+            queue.retain(|job| {
+                if job.game == game && job.node == *target {
+                    budget = budget.max(job.visits);
+                    false
+                } else {
+                    true
+                }
+            });
+            if running
+                .as_ref()
+                .is_some_and(|job| job.game == game && job.node == *target && job.visits >= budget)
+            {
+                continue;
+            }
+            if queue.len() >= 512 {
+                queue.pop_back();
+            }
+            queue.push_front(Job {
+                game: game.into(),
+                node: (*target).into(),
+                visits: budget,
+                priority: true,
+            });
+        }
+        drop(queue);
+        if running.is_some_and(|job| job.game != game || !targets.contains(&job.node.as_str())) {
+            self.engine.cancel_analysis();
+        }
+        self.wake.notify_one();
+        self.changed();
+    }
+    pub fn prepare_review(&self, id: &str) -> Result<()> {
+        let jobs = {
+            let repo = self.repo.lock().unwrap();
+            let game = repo.game(id)?;
+            let settings = repo.settings()?;
+            let evaluations = repo.evaluations(id)?;
+            let mut jobs = vec![];
+            for node in game.path(&game.active_head)? {
+                if evaluations
+                    .get(&node.id)
+                    .is_none_or(|evaluation| evaluation.visits < settings.quick_visits)
+                {
+                    jobs.push((node.id.clone(), settings.quick_visits));
+                }
+                if node.color == Some(game.human)
+                    && let Some(parent) = &node.parent
+                {
+                    let before = evaluations.get(parent);
+                    // Total visits do not guarantee enough samples for the best move.
+                    // Refine weak comparisons in bounded steps until they meet confidence.
+                    if let Some(visits) = review_budget(before, &settings) {
+                        jobs.push((parent.clone(), visits));
+                    }
+                    let minimum = settings.classification.minimum_visits;
+                    let actual_ready = before.is_some_and(|evaluation| {
+                        evaluation.candidates.iter().any(|candidate| {
+                            candidate.point == node.point && candidate.visits >= minimum
+                        })
+                    }) || evaluations
+                        .get(&node.id)
+                        .is_some_and(|evaluation| evaluation.visits >= minimum);
+                    if !actual_ready {
+                        jobs.push((
+                            node.id.clone(),
+                            settings
+                                .quick_visits
+                                .max(minimum)
+                                .min(review_visit_limit(&settings)),
+                        ));
+                    }
+                }
+            }
+            jobs
+        };
+        for (node, visits) in jobs {
+            self.enqueue(id, &node, visits, false);
+        }
+        Ok(())
     }
     pub fn background(self: &Arc<Self>) {
         let app = self.clone();
@@ -177,6 +303,14 @@ impl App {
                                 .lock()
                                 .unwrap()
                                 .save_evaluation(&g.id, &job.node, &e);
+                            if epoch == app.epoch.load(Ordering::SeqCst) {
+                                let _ = app.prepare_review(&g.id);
+                                if job.priority
+                                    && let Some(visits) = review_budget(Some(&e), &s)
+                                {
+                                    app.enqueue(&g.id, &job.node, visits, true);
+                                }
+                            }
                             if s.resignation_enabled
                                 && g.path(&job.node)
                                     .is_ok_and(|p| p.len() > s.resignation_min_moves)
@@ -280,6 +414,9 @@ impl App {
                 let _ = tokio::join!(human, strong);
                 let games = app.repo.lock().unwrap().list().unwrap_or_default();
                 for g in games {
+                    let Ok(g) = app.repo.lock().unwrap().game(&g.id) else {
+                        continue;
+                    };
                     app.kick(&g.id);
                     let evals = app.repo.lock().unwrap().evaluations(&g.id);
                     if let Ok(evals) = evals {
@@ -289,6 +426,7 @@ impl App {
                             }
                         }
                     }
+                    let _ = app.prepare_review(&g.id);
                 }
                 app.wake.notify_one();
                 app.changed();
@@ -300,6 +438,11 @@ impl App {
         let g = r.game(id)?;
         let selected = node.unwrap_or(&g.active_head).to_string();
         let position = g.position(&selected)?;
+        let previous_position = g.nodes[&selected]
+            .parent
+            .as_deref()
+            .map(|parent| g.position(parent))
+            .transpose()?;
         let evaluations = r.evaluations(id)?;
         let s = r.settings()?;
         let reviews = g
@@ -345,21 +488,53 @@ impl App {
                         review.confidence = if review.label.is_some() {
                             format!("{confidence} visits · heuristic")
                         } else {
-                            format!("{confidence} visits · low confidence")
+                            format!(
+                                "{confidence} visits · low confidence{}",
+                                if before.visits >= review_visit_limit(&s) {
+                                    " · search limit reached"
+                                } else {
+                                    ""
+                                }
+                            )
                         };
+                    }
+                    if review.label.is_none()
+                        && before.visits >= review_visit_limit(&s)
+                        && before.candidates.is_empty()
+                    {
+                        review.confidence = "No suggested move · search limit reached".into();
                     }
                 }
                 review
             })
             .collect();
         let thinking = self.thinking.lock().unwrap().contains(id);
+        let analysis = AnalysisProgress {
+            completed: evaluations.len(),
+            total: g.nodes.len(),
+            queued: self
+                .queue
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|job| job.game == id)
+                .count(),
+            running: self
+                .running
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|job| job.game == id),
+        };
         Ok(GameView {
             game: g,
             position,
+            previous_position,
             selected,
             evaluations,
             reviews,
             thinking,
+            analysis,
         })
     }
     pub fn resignation(&self, g: &Game) -> Result<bool> {
@@ -512,8 +687,182 @@ mod tests {
         a.enqueue("g", "other", 64, false);
         assert_eq!(a.queue.lock().unwrap().len(), 2);
         assert_eq!(a.queue.lock().unwrap().front().unwrap().visits, 256);
+        a.enqueue("g", "new", 512, true);
+        a.enqueue("g", "n", 64, true);
+        assert_eq!(a.queue.lock().unwrap().len(), 3);
+        assert_eq!(a.queue.lock().unwrap().front().unwrap().visits, 256);
+        assert!(a.queue.lock().unwrap().iter().any(|job| job.node == "new"));
         a.cancel_queued("g");
         assert!(a.queue.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn review_context_is_authoritative_and_both_positions_are_prioritized() {
+        let mut repo = Repository::open(Path::new(":memory:")).unwrap();
+        let mut game = Game::new(Color::B, -5, "auto".into());
+        let root = game.root.clone();
+        let first = game.add(&root, Some(60), false).unwrap();
+        let second = game.add_opponent(&first, Some(300)).unwrap();
+        repo.save(&game).unwrap();
+        let app = App::new(repo, "test".into());
+        let view = app.view(&game.id, Some(&first)).unwrap();
+        assert_eq!(view.position.board[60], 1);
+        assert!(
+            view.previous_position
+                .unwrap()
+                .board
+                .iter()
+                .all(|stone| *stone == 0)
+        );
+        assert_eq!(view.analysis.total, 3);
+        app.enqueue_review(&game.id, &first, Some(&root), 256);
+        app.enqueue_review(&game.id, &first, Some(&root), 64);
+        assert_eq!(app.queue.lock().unwrap().len(), 2);
+        assert!(
+            app.queue
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|job| job.visits == 256)
+        );
+        app.enqueue_review(&game.id, &second, Some(&first), 256);
+        let queue = app.queue.lock().unwrap();
+        assert_eq!(queue.front().unwrap().node, first);
+        assert_eq!(queue[1].node, second);
+        assert!(
+            queue
+                .iter()
+                .find(|job| job.node == root)
+                .is_some_and(|job| !job.priority)
+        );
+        drop(queue);
+        assert_eq!(app.view(&game.id, None).unwrap().analysis.queued, 3);
+        assert!(
+            app.view(&game.id, Some(&root))
+                .unwrap()
+                .previous_position
+                .is_none()
+        );
+    }
+    #[test]
+    fn old_quick_reviews_are_upgraded_without_weakening_classification_confidence() {
+        let mut repo = Repository::open(Path::new(":memory:")).unwrap();
+        let mut game = Game::new(Color::B, -5, "auto".into());
+        let root = game.root.clone();
+        let node = game.add(&root, Some(60), false).unwrap();
+        repo.save(&game).unwrap();
+        let mut before = evaluation();
+        before.visits = 65;
+        before.candidates = vec![Candidate {
+            point: Some(61),
+            visits: 63,
+            score_black: 6.,
+            winrate_black: 0.8,
+            pv: vec![Some(61)],
+            order: 0,
+        }];
+        let mut after = before.clone();
+        after.score_black = -2.;
+        after.winrate_black = 0.4;
+        repo.save_evaluation(&game.id, &root, &before).unwrap();
+        repo.save_evaluation(&game.id, &node, &after).unwrap();
+        let app = App::new(repo, "test".into());
+        assert!(app.view(&game.id, None).unwrap().reviews[0].label.is_none());
+        app.prepare_review(&game.id).unwrap();
+        app.prepare_review(&game.id).unwrap();
+        assert_eq!(app.queue.lock().unwrap().len(), 1);
+        assert_eq!(app.queue.lock().unwrap()[0].node, root);
+        assert_eq!(app.queue.lock().unwrap()[0].visits, 256);
+        before.visits = 257;
+        before.candidates[0].visits = 200;
+        app.repo
+            .lock()
+            .unwrap()
+            .save_evaluation(&game.id, &root, &before)
+            .unwrap();
+        assert_eq!(
+            app.view(&game.id, None).unwrap().reviews[0]
+                .label
+                .as_deref(),
+            Some("Blunder")
+        );
+        assert_eq!(
+            app.repo
+                .lock()
+                .unwrap()
+                .settings()
+                .unwrap()
+                .classification
+                .minimum_visits,
+            64
+        );
+    }
+    #[tokio::test]
+    async fn background_review_refines_completed_searches_until_the_move_can_be_classified() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("spread-visits.json");
+        std::fs::write(&model, r#"{"candidate_visit_divisor":16}"#).unwrap();
+        let settings = Settings {
+            executable: format!("{}/tests/fake_katago.py", env!("CARGO_MANIFEST_DIR")),
+            analysis_model: model.to_string_lossy().into(),
+            config: format!("{}/config/analysis.cfg", env!("CARGO_MANIFEST_DIR")),
+            ..Default::default()
+        };
+        let mut repo = Repository::open(Path::new(":memory:")).unwrap();
+        repo.save_settings(&settings).unwrap();
+        let mut game = Game::new(Color::B, -5, "auto".into());
+        let root = game.root.clone();
+        let node = game.add(&root, Some(60), false).unwrap();
+        repo.save(&game).unwrap();
+        let mut before = evaluation();
+        before.visits = 257;
+        before.candidates[0].visits = 32;
+        let mut after = before.clone();
+        after.visits = 65;
+        repo.save_evaluation(&game.id, &root, &before).unwrap();
+        repo.save_evaluation(&game.id, &node, &after).unwrap();
+        let app = App::new(repo, "test".into());
+        assert!(app.view(&game.id, None).unwrap().reviews[0].label.is_none());
+        app.background();
+        // One preparation call must also recover the already completed 256-visit search.
+        // The first refinement still has only 32 child visits and must schedule another.
+        app.prepare_review(&game.id).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let view = app.view(&game.id, None).unwrap();
+                if view.reviews[0].label.is_some() {
+                    assert!(view.evaluations[&root].visits >= 1030);
+                    assert!(view.evaluations[&root].candidates[0].visits >= 64);
+                    assert_eq!(view.game.nodes.len(), 2);
+                    assert_eq!(view.game.active_head, node);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("background review did not finish without another UI request");
+        app.engine.shutdown().await;
+    }
+    #[test]
+    fn review_refinement_is_bounded_and_does_not_requeue_low_confidence_forever() {
+        let settings = Settings::default();
+        let mut before = evaluation();
+        before.visits = review_visit_limit(&settings);
+        before.candidates[0].visits = 32;
+        assert_eq!(review_budget(Some(&before), &settings), None);
+        let mut repo = Repository::open(Path::new(":memory:")).unwrap();
+        let mut game = Game::new(Color::B, -5, "auto".into());
+        let root = game.root.clone();
+        let node = game.add(&root, Some(60), false).unwrap();
+        repo.save(&game).unwrap();
+        repo.save_evaluation(&game.id, &root, &before).unwrap();
+        repo.save_evaluation(&game.id, &node, &before).unwrap();
+        let app = App::new(repo, "test".into());
+        app.prepare_review(&game.id).unwrap();
+        assert!(app.queue.lock().unwrap().is_empty());
+        let view = app.view(&game.id, None).unwrap();
+        assert!(view.reviews[0].label.is_none());
+        assert!(view.reviews[0].confidence.contains("search limit reached"));
     }
     use std::path::Path;
 }

@@ -48,3 +48,9 @@ WEIQI_PREVIEW_GAME_JSON=/tmp/game-view.json cargo test --release --offline previ
 See [the cache design](adr/002-home-board-previews.md). The navigation benchmark also supplies preview images, and live-read mode permits preview GETs while continuing to intercept all mutations.
 
 With the gallery enabled and real local GETs, the three-run navigation median was 101ms for the same completed review and 48ms for idle Home; Home input during the refresh was delayed by 8ms. Both real saved-game previews decoded successfully, with no browser errors.
+
+## Review sidebar redesign (2026-10-29)
+
+With the combined chart, human-only mistake list and correction/exploration panel, the same 337-position game opened in **82ms median** over three real local HTTP runs. Idle Home navigation was **49ms median**, and the simulated Home input during an analysis refresh was delayed by **24ms**. All mutation/analysis commands were intercepted by the benchmark. The synthetic 400-move browser guard still passes.
+
+Older stored 65-visit quick evaluations often lack enough visits on their best child to meet classification confidence. The redesign retains the thresholds and upgrades weak pre-human-move positions using the configured deep budget in the background; newly played human moves prepare that comparison automatically. Pending review progress therefore counts classified human moves, rather than merely the number of cached position estimates.

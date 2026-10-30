@@ -51,6 +51,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/games/{id}", get(game))
         .route("/api/games/{id}/preview.svg", get(preview))
         .route("/api/games/{id}/moves", post(moves))
+        .route("/api/games/{id}/variations", post(variation))
         .route("/api/games/{id}/continue", post(activate))
         .route("/api/games/{id}/retry", post(retry))
         .route("/api/games/{id}/analysis", post(analyze))
@@ -251,17 +252,21 @@ async fn moves(
         node
     };
     let s = a.repo.lock().unwrap().settings()?;
-    a.enqueue(&id, &m.parent, s.quick_visits, false);
     a.enqueue(
         &id,
-        &node,
+        &m.parent,
         if m.review {
-            s.deep_visits
-        } else {
             s.quick_visits
+        } else {
+            s.deep_visits
         },
-        m.review,
+        false,
     );
+    if m.review {
+        a.enqueue_review(&id, &node, Some(&m.parent), s.deep_visits);
+    } else {
+        a.enqueue(&id, &node, s.quick_visits, false);
+    }
     if !m.review {
         a.kick(&id);
     }
@@ -274,6 +279,42 @@ struct Head {
     expected_head: String,
     #[serde(default)]
     resume: bool,
+}
+#[derive(Deserialize)]
+struct VariationRequest {
+    parent: String,
+    points: Vec<Option<usize>>,
+}
+async fn variation(
+    State(a): State<Arc<App>>,
+    Path(id): Path<String>,
+    Json(request): Json<VariationRequest>,
+) -> ApiResult<Json<Value>> {
+    if request.points.is_empty() || request.points.len() > 256 {
+        return Err("A suggested line must contain between 1 and 256 moves"
+            .to_string()
+            .into());
+    }
+    let nodes = {
+        let mut repo = a.repo.lock().unwrap();
+        let mut game = repo.game(&id)?;
+        let mut parent = request.parent.clone();
+        let mut nodes = vec![];
+        for point in request.points {
+            parent = game.add(&parent, point, true)?;
+            nodes.push(parent.clone());
+        }
+        // Validate the whole line before saving once, atomically; retries reuse existing nodes.
+        repo.save(&game)?;
+        nodes
+    };
+    let settings = a.repo.lock().unwrap().settings()?;
+    for node in &nodes {
+        a.enqueue(&id, node, settings.quick_visits, false);
+    }
+    a.enqueue_review(&id, &nodes[0], Some(&request.parent), settings.deep_visits);
+    a.changed();
+    Ok(Json(json!({"nodes":nodes})))
 }
 async fn activate(
     State(a): State<Arc<App>>,
@@ -303,26 +344,32 @@ struct AnalysisRequest {
     node: String,
     #[serde(default)]
     deep: bool,
+    #[serde(default)]
+    prepare_review: bool,
 }
 async fn analyze(
     State(a): State<Arc<App>>,
     Path(id): Path<String>,
     Json(q): Json<AnalysisRequest>,
 ) -> ApiResult<Json<Value>> {
-    let s = {
+    let (s, parent) = {
         let r = a.repo.lock().unwrap();
-        r.game(&id)?.position(&q.node)?;
-        r.settings()?
+        let game = r.game(&id)?;
+        game.position(&q.node)?;
+        (r.settings()?, game.nodes[&q.node].parent.clone())
     };
-    a.enqueue(
+    if q.prepare_review {
+        a.prepare_review(&id)?;
+    }
+    a.enqueue_review(
         &id,
         &q.node,
+        parent.as_deref(),
         if q.deep {
             s.deep_visits
         } else {
             s.quick_visits
         },
-        true,
     );
     Ok(Json(json!({"queued":true})))
 }
@@ -430,6 +477,49 @@ async fn audit(State(a): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<J
 mod tests {
     use super::*;
     use tower::ServiceExt;
+    #[tokio::test]
+    async fn suggested_lines_are_atomic_idempotent_and_preserve_a_finalized_result() {
+        let mut repo =
+            crate::repository::Repository::open(std::path::Path::new(":memory:")).unwrap();
+        let mut game = Game::new(Color::B, -5, "auto".into());
+        let root = game.root.clone();
+        let head = game.add(&root, Some(60), false).unwrap();
+        repo.save(&game).unwrap();
+        repo.finalize(&game.id, &head, "W+R").unwrap();
+        let audit = repo.audit(&game.id).unwrap();
+        let app = App::new(repo, "test".into());
+        let request = || VariationRequest {
+            parent: root.clone(),
+            points: vec![Some(61), Some(300), Some(62)],
+        };
+        let first = variation(State(app.clone()), Path(game.id.clone()), Json(request()))
+            .await
+            .unwrap_or_else(|error| panic!("{}", error.1))
+            .0;
+        let repeated = variation(State(app.clone()), Path(game.id.clone()), Json(request()))
+            .await
+            .unwrap_or_else(|error| panic!("{}", error.1))
+            .0;
+        assert_eq!(first, repeated);
+        assert!(
+            variation(
+                State(app.clone()),
+                Path(game.id.clone()),
+                Json(VariationRequest {
+                    parent: root,
+                    points: vec![Some(72), Some(72)]
+                })
+            )
+            .await
+            .is_err()
+        );
+        let repo = app.repo.lock().unwrap();
+        let saved = repo.game(&game.id).unwrap();
+        assert_eq!(saved.nodes.len(), 5);
+        assert_eq!(saved.active_head, head);
+        assert_eq!(saved.result.as_deref(), Some("W+R"));
+        assert_eq!(repo.audit(&game.id).unwrap(), audit);
+    }
     #[tokio::test]
     async fn board_previews_cache_immutable_positions_and_validate_etags() {
         use http_body_util::BodyExt;

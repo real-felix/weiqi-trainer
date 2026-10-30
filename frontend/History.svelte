@@ -7,18 +7,21 @@
     selected,
     review = false,
     reviews = [],
+    visible = true,
     onselect,
   }: {
     game: Game;
     selected: string;
     review?: boolean;
     reviews?: Review[];
+    visible?: boolean;
     onselect: (id: string) => void;
   } = $props();
   const rows = $derived(treeRows(game));
   const byNode = $derived(Object.fromEntries(reviews.map((r) => [r.node, r])));
   let list = $state<HTMLElement>();
   $effect(() => {
+    if (!visible) return;
     const target = selected;
     const element = list;
     let cancelled = false;
@@ -57,7 +60,10 @@
       {#if row.node.color}<span class:white={row.node.color === 'W'} class="mini-stone"></span>{/if}
       <span>{row.node.color ? coordinate(row.node.point) : 'Starting position'}</span>
       {#if row.fork}<CornerDownRight size={14} aria-hidden="true" />{/if}
-      {#if row.node.id === game.active_head}<span class="tag">active</span>{/if}
+      {#if row.node.id === game.active_head}<span class="tag"
+          >{review ? 'played end' : 'active'}</span
+        >{/if}
+      {#if review}<span class="sr-only">{row.active ? 'Played line' : 'Exploration'}</span>{/if}
       {#if review && classification?.label}<span
           class="classification-dot"
           style:background={colors[classification.label]}

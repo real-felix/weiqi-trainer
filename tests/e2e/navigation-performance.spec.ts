@@ -80,10 +80,10 @@ test('long reviews and analysis refreshes keep navigation responsive', async ({ 
     return performance.now() - start;
   });
   expect(openMs).toBeLessThan(1000);
-  await expect(page.locator('.review-list button')).toHaveCount(400);
-  await page.getByLabel('Sort reviewed moves').selectOption('move');
-  await expect(page.locator('.review-list button').first()).toContainText('1. B');
-  await expect(page.locator('.review-list button').last()).toContainText('400. W');
+  await expect(page.locator('.review-list button')).toHaveCount(200);
+  await page.getByLabel('Sort mistakes').selectOption('move');
+  await expect(page.locator('.review-list button').first()).toContainText('1.');
+  await expect(page.locator('.review-list button').last()).toContainText('399.');
 
   const requestsBeforeRefresh = gameRequests;
   const homeMs = await page.evaluate(async () => {

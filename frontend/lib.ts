@@ -58,10 +58,12 @@ export interface Position {
 export interface GameView {
   game: Game;
   position: Position;
+  previous_position: Position | null;
   selected: string;
   evaluations: Record<string, Evaluation>;
   reviews: Review[];
   thinking: boolean;
+  analysis: { completed: number; total: number; queued: number; running: boolean };
 }
 export interface WorkerStatus {
   state: string;

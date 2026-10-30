@@ -38,7 +38,7 @@ See ADRs for consequential choices and ENGINE.md for exact probe evidence and re
 | 9: Manual/Auto adaptive selection | Both modes exercised in browser suite; deterministic Elo/hysteresis domain tests |
 | 10: SGF variations | Parser/export unit round-trip plus browser export/reimport with six preserved nodes |
 
-Final standard gate: **27 Rust tests, 15 frontend tests, 7 browser flows pass**; `cargo fmt --check`, warning-free Clippy, Svelte/TypeScript checks, ESLint and production build pass. The separately gated real-engine adapter test passes, as does the real browser/restart smoke. The initial dependency audit reported zero known vulnerabilities after updating the test runner.
+Final standard gate: **32 Rust tests, 19 frontend tests, 8 browser flows pass**; `cargo fmt --check`, warning-free Clippy, Svelte/TypeScript checks, ESLint and production build pass. The separately gated real-engine adapter test passes, as does the real browser/restart smoke. The initial dependency audit reported zero known vulnerabilities after updating the test runner.
 
 2026-10-28 recovery update: wake/focus/visibility/online handlers replace stale SSE connections and resynchronize without changing selection or mode. A watchdog detects suspended timers and stuck connection attempts; explicit retries use bounded backoff. Unit tests simulate overnight suspension, stale callbacks and cleanup. The browser regression disconnects, creates missed moves, reconnects without reloading, and verifies preserved Review selection and domain errors.
 
@@ -60,6 +60,8 @@ Design follow-up: restored the original two-stone branding, wordmark and subtitl
 
 Branding follow-up: the app is **Weiqi Trainer**, subtitle **Local go partner** (uppercase in the navbar). Home link accessibility labels, the opening message, documentation, and SGF download filenames use the current name. The browser title, package/binary identifiers, SGF application identity and data directory already match. Existing browser workflows verify the title, navbar branding, Home navigation and export filename.
 
+2026-10-29 review sidebar redesign: implements the supplied learning-workflow requirements and both clarified choices. The sticky combined overview uses the human perspective, scrubbing and selection markers; selected moves show the previous authoritative board with colored actual/correction markers. Human-only mistake navigation precedes a compact tree, while engine details and other suggestions are disclosures. Full candidate lines are saved transactionally and can be advanced, forked and restored to the original move without changing result/rating. Both comparison positions are prioritized and analysis progress is exposed. The dedicated browser workflow covers chart drag, one-click board corrections, manual branches, return, unchanged audit/result, disclosures and sticky behavior. See [the review design decision](adr/003-review-learning-workflow.md).
+
 The UI has desktop and narrow-screen visual checks, native buttons/forms, board grid keyboard focus, history shortcuts, non-color classifications, and reduced-motion behavior. This is not a claim of a formal accessibility audit.
 
 ## Deliberate MVP bounds
@@ -71,3 +73,5 @@ The UI has desktop and narrow-screen visual checks, native buttons/forms, board 
 - The local executable and models must remain installed. No runtime network dependency or automatic installation.
 
 Serena-enabled contributors can run `serena memories check` from the repository root to sanity-check project-memory references.
+
+2026-10-30 review recovery update: reproduce the 36/42 reviewed stall as six idle, completed 257-visit positions whose best candidates had only 27–59 visits. Bounded adaptive background refinement preserves the 64-visit confidence threshold and resumes cached weak comparisons, including after restart. Existing board moves and suggestions now follow saved nodes before invoking branch creation. Regression coverage exercises autonomous multi-step refinement, bounded uncertainty, priority/budget retention, played-line clicks, branch reuse, and result/rating immutability. The updated live review reached 42/42 reviewed with no Pending moves; a read-only browser check advanced an existing played move from 26 to 27 with zero move writes. All four saved games retained their heads, node counts, results and rating audits across the graceful backend update.

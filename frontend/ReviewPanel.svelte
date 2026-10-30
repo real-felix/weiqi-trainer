@@ -1,258 +1,400 @@
 <script lang="ts">
   import Charts from './Charts.svelte';
-  import { ChevronDown, ChevronRight, Circle, CircleDashed } from '@lucide/svelte';
-  import { labels, colors, coordinate, treeRows, type GameView, type Candidate } from './lib';
+  import { ChevronDown, ChevronRight, LoaderCircle } from '@lucide/svelte';
+  import { colors, coordinate, path, type GameView, type Candidate } from './lib';
+  import {
+    correction,
+    mistakeRows,
+    lead,
+    percent,
+    playerWinrate,
+    orderedCandidates,
+  } from './review';
   let {
     view,
+    origin = null,
     onselect,
     oncandidate,
     ondeep,
     oncancel,
   }: {
     view: GameView;
+    origin?: string | null;
     onselect: (id: string) => void;
-    oncandidate: (c: Candidate) => void;
+    oncandidate: (candidate: Candidate) => void;
     ondeep: () => void;
     oncancel: () => void;
   } = $props();
-  let severity = $state('All moves');
-  let sort = $state('severity');
+  let inaccuracies = $state(false);
+  let sort = $state<'move' | 'severity'>('move');
+  const focus = $derived(correction(view));
+  const rows = $derived(mistakeRows(view, inaccuracies, sort));
   const evaluation = $derived(view.evaluations[view.selected]);
-  const moveNumbers = $derived(
-    new Map(treeRows(view.game).map(({ node, move }) => [node.id, move])),
+  const candidates = $derived(
+    origin
+      ? orderedCandidates(evaluation?.candidates ?? [], view.position.turn)
+      : focus.alternatives,
   );
-  const rows = $derived(
-    view.reviews
-      .filter((r) => severity === 'All moves' || r.label === severity)
-      .sort((a, b) =>
-        sort === 'severity'
-          ? labels.indexOf(b.label as (typeof labels)[number]) -
-              labels.indexOf(a.label as (typeof labels)[number]) ||
-            (b.score_loss ?? 0) - (a.score_loss ?? 0)
-          : (moveNumbers.get(a.node) ?? 0) - (moveNumbers.get(b.node) ?? 0),
-      ),
+  const beforeWin = $derived(playerWinrate(focus.before, view.game.human));
+  const afterWin = $derived(playerWinrate(focus.actual, view.game.human));
+  const played = $derived(path(view.game.nodes, view.game.active_head));
+  const reviewed = $derived(new Map(view.reviews.map((review) => [review.node, review])));
+  const move = $derived(path(view.game.nodes, view.selected).length - 1);
+  const humanMoves = $derived(played.filter((node) => node.color === view.game.human));
+  const unresolved = $derived(humanMoves.filter((node) => !reviewed.get(node.id)?.label));
+  const lowConfidence = $derived(
+    unresolved.filter((node) => reviewed.get(node.id)?.confidence.includes('search limit reached'))
+      .length,
+  );
+  const pending = $derived(unresolved.length - lowConfidence);
+  const progress = $derived(
+    view.analysis ?? {
+      completed: Object.keys(view.evaluations).length,
+      total: Object.keys(view.game.nodes).length,
+      queued: 0,
+      running: false,
+    },
   );
 </script>
 
-<section class="review-panel" aria-label="Position analysis">
-  <div class="section-heading">
-    <h2>Position analysis</h2>
-    <button class="text-button" onclick={ondeep}>Analyze deeper</button>
-  </div>
-  {#if evaluation}
-    <div class="evaluation">
-      <div>
-        <strong
-          >{evaluation.score_black >= 0 ? 'B' : 'W'} +{Math.abs(evaluation.score_black).toFixed(
-            1,
-          )}</strong
-        ><span>estimated lead</span>
+<Charts game={view.game} selected={view.selected} evaluations={view.evaluations} {onselect} />
+<section class="review-panel" aria-label="Move review">
+  <section class="correction" aria-label={origin ? 'Explored position' : 'Selected move'}>
+    <div class="section-heading">
+      <h2>{origin ? 'Exploring' : focus.node?.color ? `Move ${move}` : 'Starting position'}</h2>
+      <button class="text-button" onclick={ondeep}>Analyze deeper</button>
+    </div>
+    {#if origin}
+      <div class="comparison">
+        <div>
+          <span>Original</span><strong>{lead(view.evaluations[origin])}</strong><span
+            >{percent(playerWinrate(view.evaluations[origin], view.game.human))}</span
+          >
+        </div>
+        <div>
+          <span>Alternative</span><strong>{lead(evaluation)}</strong><span
+            >{percent(playerWinrate(evaluation, view.game.human))}</span
+          >
+        </div>
       </div>
-      <div>
-        <strong>{(evaluation.winrate_black * 100).toFixed(1)}%</strong><span
-          >Black win probability</span
+    {:else if focus.node?.color}
+      <div class="played-move">
+        <strong>Played {coordinate(focus.node.point)}</strong><span
+          class="badge"
+          style:color={colors[focus.review?.label ?? ''] ?? 'var(--muted)'}
+          >{focus.review?.label ??
+            (focus.review?.confidence.includes('search limit reached')
+              ? 'Low confidence'
+              : 'Pending')}</span
         >
       </div>
-    </div>
-    <Charts game={view.game} selected={view.selected} evaluations={view.evaluations} {onselect} />
-    <h3>Candidate lines</h3>
-    <div class="candidates">
-      {#each evaluation.candidates.slice(0, 5) as c, i (i)}
-        <button onclick={() => oncandidate(c)} title={`Explore ${c.pv.map(coordinate).join(' → ')}`}
-          ><span class="candidate-letter">{String.fromCharCode(65 + i)}</span><span
-            ><strong>{coordinate(c.point)}</strong><small class="pv-line"
-              >{#each c.pv.slice(1, 5) as point, i (i)}{#if i > 0}<ChevronRight
-                    size={11}
-                    aria-hidden="true"
-                  />{/if}<span>{coordinate(point)}</span>{/each}</small
-            ></span
-          ><span class="candidate-score"
-            >{c.score_black >= 0 ? 'B' : 'W'} +{Math.abs(c.score_black).toFixed(1)}<small
-              >{c.visits} visits</small
-            ></span
-          ></button
+      <div class="move-impact">
+        <span
+          >Points lost <strong
+            >{focus.review?.score_loss == null
+              ? 'Pending'
+              : focus.review.score_loss.toFixed(1)}</strong
+          ></span
+        ><span
+          >{view.game.human === 'B' ? 'Black' : 'White'} win probability
+          <strong>{percent(beforeWin)} → {percent(afterWin)}</strong></span
         >
-      {/each}
-    </div>
-    <details class="analysis-identity">
-      <summary
-        >Analysis provenance<ChevronDown
-          size={15}
-          class="disclosure-icon"
-          aria-hidden="true"
-        /></summary
-      >
-      <p>{evaluation.visits} visits · {new Date(evaluation.created_at).toLocaleString()}</p>
-      <code>{evaluation.engine}<br />{evaluation.model}<br />{evaluation.config}</code>
-    </details>
-  {:else}<p class="muted small">
-      Analysis is queued locally. You can keep navigating and exploring.
-    </p>{/if}
-  <div class="section-heading review-heading">
-    <h3>Move review</h3>
-    <button class="text-button" onclick={oncancel}>Cancel analysis</button>
-  </div>
-  <div class="review-filters">
-    <select aria-label="Filter by severity" bind:value={severity}
-      ><option>All moves</option>{#each labels as label (label)}<option>{label}</option
-        >{/each}</select
-    ><select aria-label="Sort reviewed moves" bind:value={sort}
-      ><option value="severity">Severity</option><option value="move">Move order</option></select
-    >
-  </div>
-  <div class="review-list">
-    {#each rows as r (r.node)}
-      {@const n = view.game.nodes[r.node]}
-      <button
-        onclick={() => onselect(r.node)}
-        class:current={view.selected === r.node}
-        title={`${r.confidence} · ${r.version}`}
-      >
-        <span class="move-index">{moveNumbers.get(n.id)}. {n.color} {coordinate(n.point)}</span
-        ><span class="classification" style:color={colors[r.label ?? ''] ?? 'var(--muted)'}
-          >{#if r.label}<Circle
-              size={8}
-              fill="currentColor"
+      </div>
+    {/if}
+    {#if !origin && focus.bestPlayed}<p class="small muted">Best move played</p>{/if}
+    {#if candidates[0]}
+      {#if origin || !focus.bestPlayed}<button
+          class="suggestion best"
+          onclick={() => oncandidate(candidates[0])}
+          title={`Explore ${candidates[0].pv.map(coordinate).join(' → ')}`}
+        >
+          <span class="candidate-letter">A</span><span
+            ><strong>{origin ? 'Continue' : 'Try'} {coordinate(candidates[0].point)}</strong><small
+              >{candidates[0].pv.slice(1, 5).map(coordinate).join(' → ') || 'Suggested move'}</small
+            ></span
+          ><ChevronRight size={16} aria-hidden="true" />
+        </button>{/if}
+      {#if candidates.length > 1 || (!origin && focus.bestPlayed)}<details
+          class="other-suggestions"
+        >
+          <summary
+            >Other suggestions<ChevronDown
+              size={15}
+              class="disclosure-icon"
               aria-hidden="true"
-            />{:else}<CircleDashed size={12} aria-hidden="true" />{/if}{r.label ?? 'Pending'}</span
-        ><span class="loss">{r.score_loss === null ? '—' : `−${r.score_loss.toFixed(1)}`}</span>
-      </button>
-    {/each}
-  </div>
-  <p class="muted small heuristic">
-    Labels are rank-aware heuristics. Low-confidence moves stay pending. “AI move” requires a deeply
-    analyzed preferred move.
-  </p>
+            /></summary
+          >
+          <div class="suggestions">
+            {#each candidates.slice(!origin && focus.bestPlayed ? 0 : 1, 5) as candidate, index (candidate.point)}<button
+                class="suggestion"
+                onclick={() => oncandidate(candidate)}
+                title={`Explore ${candidate.pv.map(coordinate).join(' → ')}`}
+                ><span
+                  class="candidate-letter"
+                  class:secondary={!!origin || !focus.bestPlayed || index > 0}
+                  >{String.fromCharCode((!origin && focus.bestPlayed ? 65 : 66) + index)}</span
+                ><span
+                  ><strong>{coordinate(candidate.point)}</strong><small
+                    >{candidate.pv.slice(1, 5).map(coordinate).join(' → ')}</small
+                  ></span
+                ><span class="candidate-evaluation"
+                  >{lead(candidate)}<small
+                    >{percent(playerWinrate(candidate, view.game.human))}</small
+                  ></span
+                ></button
+              >{/each}
+          </div>
+        </details>{/if}
+    {:else}<p class="pending small" role="status">
+        {(origin ? evaluation : focus.node?.parent ? focus.before : evaluation)
+          ? 'No alternative available.'
+          : 'Suggestions pending'}
+      </p>{/if}
+  </section>
+  <section class="mistakes" aria-label="Your mistakes">
+    <div class="section-heading">
+      <h2>Your mistakes</h2>
+      <span class="muted small">{rows.length}</span>
+    </div>
+    <div class="review-filters">
+      <label><input type="checkbox" bind:checked={inaccuracies} /> Include inaccuracies</label
+      ><select aria-label="Sort mistakes" bind:value={sort}
+        ><option value="move">Move order</option><option value="severity">Severity</option></select
+      >
+    </div>
+    <div class="review-list">
+      {#each rows as row (row.node.id)}<button
+          class:current={view.selected === row.node.id}
+          onclick={() => onselect(row.node.id)}
+          aria-current={view.selected === row.node.id ? 'step' : undefined}
+        >
+          <span class="move-index">{row.move}. {coordinate(row.node.point)}</span><span
+            class="badge"
+            style:color={colors[row.review.label!]}>{row.review.label}</span
+          ><span class="loss">−{row.review.score_loss?.toFixed(1) ?? 'Pending'} pts</span><span
+            class="winrate">{percent(row.winrate)}</span
+          >
+        </button>{/each}
+    </div>
+    {#if !rows.length}<p class="small muted">
+        {pending
+          ? 'Mistakes will appear as analysis completes.'
+          : lowConfidence
+            ? 'Some moves remain uncertain after analysis.'
+            : inaccuracies
+              ? 'No mistakes or inaccuracies found.'
+              : 'No mistakes or blunders found.'}
+      </p>{/if}
+    <p class="analysis-progress small muted" role="status">
+      {#if progress.running || progress.queued}<LoaderCircle
+          size={13}
+          class="spinner"
+          aria-hidden="true"
+        /> Analyzing ·
+      {/if}{humanMoves.length - unresolved.length}/{humanMoves.length} moves reviewed{#if pending}
+        · {pending} Pending{/if}{#if lowConfidence}
+        · {lowConfidence} low confidence{/if}
+    </p>
+  </section>
+  <details class="analysis-details">
+    <summary
+      >Analysis details<ChevronDown size={15} class="disclosure-icon" aria-hidden="true" /></summary
+    >
+    <p>{progress.completed}/{progress.total} positions cached · {progress.queued} queued</p>
+    {#if evaluation}<p>
+        {evaluation.visits} visits · {new Date(evaluation.created_at).toLocaleString()}
+      </p>
+      <code>{evaluation.engine}<br />{evaluation.model}<br />{evaluation.config}</code>{/if}
+    {#if focus.review}<p>{focus.review.confidence} · {focus.review.version}</p>{/if}
+    <button class="text-button" onclick={oncancel}>Cancel analysis</button>
+  </details>
 </section>
 
 <style>
-  .evaluation {
+  .review-panel button {
+    scroll-margin-block: 180px 12px;
+  }
+  h2 {
+    font-size: 1rem;
+  }
+  .section-heading {
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+  .correction {
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .played-move {
     display: flex;
     justify-content: space-between;
-    padding: 13px 0 4px;
+    gap: 10px;
+    align-items: center;
+    font-size: var(--text-sm);
   }
-  .evaluation div {
+  .badge {
+    padding: 3px 7px;
+    border-radius: 4px;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+    font-size: 0.75rem;
+    font-weight: 550;
+    white-space: nowrap;
+  }
+  .move-impact {
     display: grid;
-    gap: 5px;
+    gap: 8px;
+    margin: 12px 0;
+    font-size: 0.75rem;
+    color: var(--muted);
   }
-  .evaluation strong {
-    font-size: 1.625rem;
+  .move-impact > span {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .move-impact strong {
+    color: var(--ink);
     font-weight: 500;
     font-variant-numeric: tabular-nums;
   }
-  .evaluation span {
-    font-size: var(--text-xs);
-    color: var(--muted);
-  }
-  h3 {
-    font-size: var(--text-sm);
-    font-weight: 550;
-    margin: 16px 0 10px;
-  }
-  .candidates {
+  .comparison {
     display: grid;
-    gap: 3px;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    font-size: var(--text-sm);
+    margin-bottom: 12px;
   }
-  .candidates button {
+  .comparison > div {
+    display: grid;
+    gap: 6px;
+  }
+  .comparison span {
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .suggestion {
     display: flex;
     align-items: center;
-    gap: 10px;
-    border: 0;
-    background: var(--paper);
+    gap: 8px;
+    width: 100%;
     padding: 9px;
+    border: 0;
     text-align: left;
+    background: var(--surface);
     font-size: var(--text-sm);
   }
+  .best {
+    margin-top: 12px;
+  }
+  .suggestion > :global(svg) {
+    margin-left: auto;
+  }
   .candidate-letter {
-    background: #e7edf5;
-    border-radius: 50%;
-    width: 22px;
-    height: 22px;
     display: grid;
     place-items: center;
-    color: #3673ba;
-    font-size: var(--text-xs);
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    color: #3069ad;
+    background: #e7edf5;
+    flex-shrink: 0;
+    font-weight: 550;
   }
-  .candidates strong {
-    font-weight: 500;
+  .candidate-letter.secondary {
+    color: #287647;
+    background: #e7efe9;
   }
   small {
     display: block;
-    font-size: 0.75rem;
     color: var(--muted);
+    font-size: 0.75rem;
     margin-top: 4px;
   }
-  .candidate-score {
-    margin-left: auto;
+  .candidate-evaluation {
     text-align: right;
-    font-variant-numeric: tabular-nums;
-    font-size: var(--text-xs);
+    margin-left: auto;
+    font-size: 0.75rem;
   }
-  .analysis-identity {
-    font-size: var(--text-xs);
-    color: var(--muted);
+  .other-suggestions {
     margin-top: 12px;
   }
-  .analysis-identity code {
-    font-size: 0.75rem;
-    overflow-wrap: anywhere;
+  .suggestions {
+    display: grid;
+    gap: 4px;
+    margin-top: 8px;
   }
-  .review-heading {
-    margin-top: 20px;
+  .mistakes {
+    padding-top: 18px;
   }
   .review-filters {
     display: flex;
+    justify-content: space-between;
+    align-items: center;
     gap: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
   }
-  .review-filters select {
-    min-width: 0;
-    width: 50%;
-    font-size: var(--text-xs);
-    padding: 7px;
+  .review-filters label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.75rem;
+  }
+  input {
+    min-height: auto;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+  select {
+    font-size: 0.75rem;
+    padding: 6px;
+    min-height: 34px;
   }
   .review-list {
-    padding-right: 14px;
-    scrollbar-gutter: stable;
-    max-height: 200px;
-    overflow: auto;
     display: grid;
-    gap: 2px;
+    gap: 4px;
   }
   .review-list button {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto;
     gap: 7px;
     align-items: center;
-    padding: 8px;
+    padding: 9px;
     border: 0;
     background: transparent;
-    text-align: left;
     font-size: var(--text-xs);
+    text-align: left;
   }
   .review-list button.current {
     background: var(--sage);
   }
-  .classification {
-    margin-left: auto;
-    font-size: var(--text-xs);
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .pv-line {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-  .loss {
-    width: 30px;
-    text-align: right;
+  .loss,
+  .winrate {
     color: var(--muted);
+    font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
   }
-  .heuristic {
-    font-size: var(--text-xs);
-    line-height: 1.7;
-    margin-bottom: 0;
+  .winrate {
+    text-align: right;
+  }
+  .analysis-progress {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+  }
+  .analysis-details {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .analysis-details p {
+    margin: 10px 0;
+  }
+  code {
+    overflow-wrap: anywhere;
   }
 </style>

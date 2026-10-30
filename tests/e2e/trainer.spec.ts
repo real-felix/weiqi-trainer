@@ -4,16 +4,22 @@ test('play, fork, review, finalize, reload, and interchange SGF',async ({page,re
   await page.goto('/');await expect(page.getByRole('heading',{name:'Find your next move.'})).toBeVisible();
   await expect.poll(async()=> (await (await request.get('/api/state')).json()).engine.human.supported_ranks.length).toBe(29);
   await page.getByRole('button',{name:'New game'}).click();await page.getByLabel('Your color').selectOption('B');await page.getByRole('button',{name:'Start game',exact:true}).click();
-  await expect(page.getByText('YOUR TURN',{exact:true})).toBeVisible();
+  await expect(page.locator('.navbar-game').getByText('Your turn',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Return to active continuation'})).toHaveCount(0);
   await page.getByRole('gridcell',{name:'D16, empty',exact:true}).click();
   await expect(page.getByRole('gridcell',{name:'Q4, white stone',exact:true})).toBeVisible();
   const gameId=page.url().split('/').pop()!;
+  await page.getByRole('button',{name:'First move',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Return to active continuation'})).toBeVisible();
+  await page.getByRole('button',{name:'Last move',exact:true}).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('2/2');
+  await expect(page.getByRole('button',{name:'Return to active continuation'})).toHaveCount(0);
   await page.getByRole('button',{name:'First move',exact:true}).click();
   await page.getByRole('gridcell',{name:'E16, empty',exact:true}).click();
   await expect(page.getByRole('gridcell',{name:'Q4, white stone',exact:true})).toBeVisible();
   let view=await (await request.get(`/api/games/${gameId}`)).json();expect(Object.keys(view.game.nodes)).toHaveLength(5);const active=view.game.active_head;
   expect(await page.getByText('Position analysis',{exact:true}).count()).toBe(0);
-  await page.getByRole('button',{name:'Review',exact:true}).click();await expect(page.getByRole('heading',{name:'Position analysis'})).toBeVisible();
+  await page.getByRole('button',{name:'Review',exact:true}).click();await expect(page.getByRole('heading',{name:'Your mistakes'})).toBeVisible();
   await page.getByRole('button',{name:'First move',exact:true}).click();await page.getByRole('gridcell',{name:'F16, empty',exact:true}).click();
   view=await (await request.get(`/api/games/${gameId}`)).json();expect(view.game.active_head).toBe(active);expect(Object.keys(view.game.nodes)).toHaveLength(6);
   await expect(page.getByText('Black win probability',{exact:true})).toBeVisible();
@@ -22,7 +28,7 @@ test('play, fork, review, finalize, reload, and interchange SGF',async ({page,re
   await expect(page.getByRole('button',{name:'Play',exact:true})).toHaveCount(0);
   const audit=await (await request.get(`/api/games/${gameId}/audit`)).json();expect(audit.after).toBeLessThan(audit.before);
   await request.post(`/api/games/${gameId}/resign`,{data:{head:active}});expect(await (await request.get(`/api/games/${gameId}/audit`)).json()).toEqual(audit);
-  await page.reload();await expect(page.getByRole('heading',{name:'Position analysis'})).toBeVisible();
+  await page.reload();await expect(page.getByRole('heading',{name:'Your mistakes'})).toBeVisible();
   const exported=await request.get(`/api/games/${gameId}/sgf`);expect(exported.headers()['content-disposition']).toContain(`filename=weiqi-trainer-${gameId}.sgf`);const sgf=await exported.text();expect(sgf).toContain('(;B[');
   const imported=await (await request.post('/api/games/import',{data:{sgf}})).json();const importedGame=await (await request.get(`/api/games/${imported.id}`)).json();expect(Object.keys(importedGame.game.nodes)).toHaveLength(6);
   await page.getByRole('link',{name:'Weiqi Trainer home',exact:true}).click();await expect(page.getByRole('heading',{name:/Review games/})).toBeVisible();
@@ -36,7 +42,7 @@ test('two passes require explicit agreement and confirmation',async({page,reques
   await page.getByRole('button',{name:'Pass',exact:true}).click();await expect(page.getByRole('heading',{name:'Settle the board.'})).toBeVisible();
   await page.getByRole('button',{name:'Check score with opponent'}).click();await expect(page.getByRole('button',{name:'Confirm final result'})).toBeVisible();
   let v=await (await request.get(`/api/games/${created.id}`)).json();expect(v.game.result).toBeNull();
-  await page.getByRole('button',{name:'Disagree / resume play'}).click();await expect(page.getByText('YOUR TURN',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Disagree / resume play'}).click();await expect(page.locator('.navbar-game').getByText('Your turn',{exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Pass',exact:true}).click();await expect(page.getByRole('heading',{name:'Settle the board.'})).toBeVisible();
   await page.getByRole('button',{name:'Check score with opponent'}).click();await page.getByRole('button',{name:'Confirm final result'}).click();
   await expect(page.getByRole('button',{name:'Play',exact:true})).toHaveCount(0);
@@ -50,6 +56,7 @@ test('reconnects after going offline and catches up without leaving the selected
   page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations++; });
   await page.goto(`/#game/${created.id}`);
   await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.locator('.variation-panel > summary').click();
   await page.getByRole('button', { name: 'First move', exact: true }).click();
   const selectedPosition = page.getByRole('navigation', { name: 'Move variations' }).getByRole('button', { name: /Starting position/ });
   await expect(selectedPosition).toHaveAttribute('aria-current', 'step');
@@ -69,12 +76,12 @@ test('reconnects after going offline and catches up without leaving the selected
     await expect(page.getByRole('navigation', { name: 'Move variations' }).getByRole('button', { name: /Q4/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Review', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(selectedPosition).toHaveAttribute('aria-current', 'step');
-    await expect(page.getByRole('gridcell', { name: 'D16, empty', exact: true })).toBeVisible();
+    await expect(page.getByRole('gridcell', { name: /D16, (suggestion.*empty|empty)/ })).toBeVisible();
     await expect(page.getByRole('alert')).toHaveCount(0);
     expect(navigations).toBe(1);
     // A successful catch-up clears transport errors, but must preserve domain errors.
     await page.route(`**/api/games/${created.id}/moves`, route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'Illegal move fixture' }) }));
-    await page.getByRole('gridcell', { name: 'D16, empty', exact: true }).click();
+    await page.getByRole('gridcell', { name: 'T19, empty', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText('Illegal move fixture');
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(page.getByText('Offline by design', { exact: true })).toBeVisible();
@@ -156,6 +163,8 @@ test('pins the board, fills the sidebar, and follows new moves without disturbin
     const header = await page.locator('.app-header').boundingBox();
     const footer = await page.locator('.engine-bar').boundingBox();
     expect(bounds!.width).toBeGreaterThan(180);
+    const controls = await page.locator('.history-controls').boundingBox();
+    expect(Math.abs(controls!.x + controls!.width / 2 - bounds!.x - bounds!.width / 2)).toBeLessThan(1);
     expect(bounds!.y).toBeGreaterThanOrEqual(header!.y + header!.height);
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(footer!.y + 1);
     const dimensions = await page.evaluate(() => ({ height: document.documentElement.scrollHeight, width: document.documentElement.scrollWidth, viewportHeight: innerHeight, viewportWidth: innerWidth, scroll: scrollY }));
@@ -163,18 +172,14 @@ test('pins the board, fills the sidebar, and follows new moves without disturbin
     expect(dimensions.width).toBeLessThanOrEqual(dimensions.viewportWidth);
     expect(dimensions.scroll).toBe(0);
     if (dimensions.viewportWidth > 760) {
-      if (await page.locator('.turn-panel > .eyebrow').count()) {
-        const turn = await page.locator('.turn-panel > .eyebrow').boundingBox();
-        const details = await page.locator('.board-topline > span').last().boundingBox();
-        expect(Math.abs(turn!.y + turn!.height / 2 - details!.y - details!.height / 2)).toBeLessThan(2);
-      }
-
+      if (await page.locator('.game-metadata').count()) {
       const navigation = await page.locator('.board-navigation').boundingBox();
       const metadata = await page.locator('.game-metadata').boundingBox();
       expect(Math.abs(navigation!.y + navigation!.height - metadata!.y - metadata!.height)).toBeLessThan(1);
       const move = await page.locator('.history-controls > span').boundingBox();
       const captures = await page.locator('.game-metadata > span').boundingBox();
       expect(Math.abs(move!.y + move!.height / 2 - captures!.y - captures!.height / 2)).toBeLessThan(2);
+      }
     }
 
   };
@@ -183,7 +188,7 @@ test('pins the board, fills the sidebar, and follows new moves without disturbin
     const bounds = element.getBoundingClientRect();
     return selected.top >= bounds.top - 1 && selected.bottom <= bounds.bottom + 1;
   });
-  await expect(page.locator('.app-header').getByRole('heading', { name: 'Human SL 5k · You play Black' })).toBeVisible();
+  await expect(page.locator('.app-header').getByRole('heading', { name: 'Human SL 5k Black stone Your turn' })).toBeVisible();
   await expect(page.locator('.app-header').getByRole('button', { name: 'Review', exact: true })).toBeVisible();
   await expect(page.getByText('AUTO OPPONENT', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Arrow keys on the board to move · Enter to place a stone', { exact: true })).toHaveCount(0);
@@ -192,7 +197,7 @@ test('pins the board, fills the sidebar, and follows new moves without disturbin
   await expect.poll(selectedIsInHistoryViewport).toBe(true);
 
   await expect(page.locator('.history-controls > span')).toHaveText('80/80');
-  await expect(page.locator('.board-topline')).toContainText('Move 80/80');
+  await expect(page.locator('.board-topline')).toHaveCount(0);
   await expect(page.getByText('Take your time.', { exact: true })).toHaveCount(0);
   await expect(page.getByText('No clock. Find a move that feels right.', { exact: true })).toHaveCount(0);
   await expect(page.locator('.board-hint')).toHaveCount(0);
@@ -217,7 +222,7 @@ test('pins the board, fills the sidebar, and follows new moves without disturbin
     expect(response.ok()).toBeTruthy();
     await expect.poll(async () => Object.keys((await (await request.get(`/api/games/${created.id}`)).json()).game.nodes).length).toBe(expectedMoves + 1);
     // Setup queues analysis for 80 positions; allow the debounced SSE refresh to settle on a busy host.
-    await expect(page.locator('.variation-panel .section-heading')).toContainText(`${expectedMoves} moves`, { timeout: 15000 });
+    await expect(page.locator('.variation-panel')).toContainText(`${expectedMoves} moves`, { timeout: 15000 });
   };
   await playFromActive(80, 82);
   await expect(history.locator('[aria-current="step"]')).toContainText('active');
@@ -232,6 +237,7 @@ test('pins the board, fills the sidebar, and follows new moves without disturbin
   }
   await page.setViewportSize({ width: 1360, height: 1000 });
   await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.locator('.variation-panel > summary').click();
   await page.getByRole('button', { name: 'First move', exact: true }).click();
   await expect(history.locator('[aria-current="step"]')).toContainText('Starting position');
   await expect(page.locator('.history-controls > span')).toHaveText('0/82');
@@ -242,13 +248,15 @@ test('pins the board, fills the sidebar, and follows new moves without disturbin
   await expect(history.locator('[aria-current="step"]')).toContainText('Starting position');
   expect(await history.evaluate(element => element.scrollTop)).toBeLessThan(4);
   await assertBoardFits();
+  await page.setViewportSize({ width: 1360, height: 650 });
   const before = await board.boundingBox();
-  const metadataBefore = await page.locator('.game-metadata').boundingBox();
+  const overviewBefore = await page.locator('.review-overview').boundingBox();
   await sidebar.hover();
   await page.mouse.wheel(0, 1200);
   await expect.poll(() => sidebar.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
   expect(await board.boundingBox()).toEqual(before);
-  expect(await page.locator('.game-metadata').boundingBox()).toEqual(metadataBefore);
+  const overviewAfter = await page.locator('.review-overview').boundingBox();
+  expect(overviewAfter!.y).toBe(overviewBefore!.y);
   await assertBoardFits();
   await page.screenshot({ path: 'test-results/focused-review-desktop.png', fullPage: true });
   // Opening diagnostics overlays the workspace and leaves the board in place.
@@ -281,7 +289,7 @@ test('Home board tiles load cached SVGs and follow the active played position', 
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true);
   const firstUrl = await image.getAttribute('src');
   await tile.click();
-  await page.getByRole('gridcell', { name: 'D16, empty', exact: true }).click();
+  await page.getByRole('gridcell', { name: /D16, (suggestion.*empty|empty)/ }).click();
   await expect(page.getByRole('gridcell', { name: 'Q4, white stone', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Weiqi Trainer home', exact: true }).click();
   await expect(image).not.toHaveAttribute('src', firstUrl!);
@@ -339,4 +347,146 @@ test('Home board tiles load cached SVGs and follow the active played position', 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await page.screenshot({ path: 'test-results/board-gallery-mobile.png', fullPage: true });
+});
+
+test('reviews human mistakes before each move and explores corrections without changing the result', async ({ page, request }) => {
+  let moveWrites = 0;
+  page.on('request', request => {
+    if (request.method() === 'POST' && /\/api\/games\/[^/]+\/(moves|variations)$/.test(request.url())) moveWrites++;
+  });
+  await expect.poll(async () => (await (await request.get('/api/state')).json()).engine.human.supported_ranks.length).toBe(29);
+  const created = await (await request.post('/api/games', { data: { mode: 'manual', rank: -5, color: 'B' } })).json();
+  const initial = await (await request.get(`/api/games/${created.id}`)).json();
+  const ids = [initial.game.root];
+  for (const point of [60, 300, 72, 288, 62, 342]) {
+    const response = await request.post(`/api/games/${created.id}/moves`, { data: { parent: ids.at(-1), point, review: true } });
+    expect(response.ok()).toBe(true);
+    ids.push((await response.json()).node);
+  }
+  await request.post(`/api/games/${created.id}/continue`, { data: { node: ids[6], expected_head: ids[0] } });
+  await request.post(`/api/games/${created.id}/resign`, { data: { head: ids[6] } });
+  const audit = await (await request.get(`/api/games/${created.id}/audit`)).json();
+  // Supply deterministic strong evaluations while retaining the real server's boards, rules,
+  // node persistence, analysis queue, final result and rating transaction.
+  await page.route(new RegExp('/api/games/' + created.id + '(?:\\?.*)?$'), async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    const template = Object.values(data.evaluations)[0] as Record<string, unknown> | undefined;
+    const evaluation = (score: number, winrate: number) => ({ ...template, score_black: score, winrate_black: winrate, visits: 256, candidates: [], ownership: [], engine: 'KataGo fixture', model: 'strong fixture', config: 'fixture', created_at: '2026-10-29T08:00:00Z' });
+    for (const [index, id] of ids.entries()) data.evaluations[id] = evaluation([6, -2, 1, -3, 2, 1, 0][index], [.8, .4, .6, .35, .6, .55, .5][index]);
+    data.evaluations[ids[0]].candidates = [
+      { point: 61, visits: 256, score_black: 6, winrate_black: .8, order: 0, pv: [61, 300, 62] },
+      { point: 63, visits: 256, score_black: 5, winrate_black: .78, order: 1, pv: [63, 300] },
+      { point: 60, visits: 256, score_black: -2, winrate_black: .4, order: 2, pv: [60, 300] },
+    ];
+    data.evaluations[ids[2]].candidates = [
+      { point: 73, visits: 256, score_black: 1, winrate_black: .6, order: 0, pv: [73, 288, 62] },
+      { point: 74, visits: 256, score_black: .5, winrate_black: .55, order: 1, pv: [74, 288] },
+    ];
+    data.evaluations[ids[4]].candidates = [{ point: 63, visits: 256, score_black: 2, winrate_black: .6, order: 0, pv: [63, 342] }];
+    for (const [index, label, loss] of [[1, 'Blunder', 8], [2, 'Blunder', 20], [3, 'Mistake', 4], [5, 'Inaccuracy', 1]] as const) {
+      const row = data.reviews.find((row: { node: string }) => row.node === ids[index]);
+      Object.assign(row, { label, score_loss: loss, confidence: '256 visits' });
+    }
+    await route.fulfill({ json: data });
+  });
+  await page.goto(`/#game/${created.id}`);
+  const mistakes = page.getByRole('region', { name: 'Your mistakes' });
+  await expect(mistakes.locator('.review-list button')).toHaveCount(2);
+  await expect(mistakes.locator('.review-list button').first()).toContainText('1. D16');
+  await expect(mistakes.locator('.review-list button').last()).toContainText('3. Q16');
+  await expect(page.locator('.chart-navigation')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Export SGF' })).toHaveCount(0);
+  await expect(page.locator('.game-metadata')).toHaveCount(0);
+  await mistakes.getByRole('button', { name: /1\. D16/ }).click();
+  const selected = page.getByRole('region', { name: 'Selected move' });
+  await expect(selected).toContainText('Played D16');
+  await expect(selected).toContainText('80.0% → 40.0%');
+  await expect(page.locator('circle.actual-move')).toHaveAttribute('fill', '#b8363b');
+  await expect(page.getByRole('gridcell', { name: 'D16, played move 1, Blunder' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toBeVisible();
+  await expect(page.locator('svg.board circle[fill="url(#black)"]')).toHaveCount(1);
+  await expect(page.getByText('Cancel analysis', { exact: true })).not.toBeVisible();
+  await expect(page.getByText('G16', { exact: true })).not.toBeVisible();
+  await page.screenshot({ path: 'test-results/review-selected-desktop.png', fullPage: true });
+  await page.getByRole('gridcell', { name: 'D16, played move 1, Blunder' }).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('2/6');
+  await expect(selected).toContainText('Played Q4');
+  await expect(page.getByRole('region', { name: 'Explored position' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Next move', exact: true }).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('3/6');
+  expect(moveWrites).toBe(0);
+  expect(Object.keys((await (await request.get(`/api/games/${created.id}`)).json()).game.nodes)).toHaveLength(7);
+  await mistakes.getByRole('button', { name: /1\. D16/ }).click();
+  await page.getByRole('gridcell', { name: 'E16, suggestion A, empty' }).click();
+  await expect(page.getByRole('region', { name: 'Explored position' })).toContainText('Original');
+  await expect(page.getByRole('gridcell', { name: 'E16, black stone' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Last move', exact: true }).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('3/6');
+  await expect(page.getByRole('gridcell', { name: 'F16, black stone' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Previous move', exact: true }).click();
+  await page.getByRole('button', { name: 'Previous move', exact: true }).click();
+  await page.getByRole('button', { name: 'Previous move', exact: true }).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('0/6');
+  await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Next move', exact: true }).click();
+  await expect(page.getByRole('gridcell', { name: 'E16, black stone' })).toBeVisible();
+  await page.getByRole('button', { name: 'Next move', exact: true }).click();
+  await expect(page.getByRole('gridcell', { name: 'Q4, white stone' })).toBeVisible();
+  await page.getByRole('gridcell', { name: 'T19, empty' }).click();
+  await expect(page.getByRole('gridcell', { name: 'T19, black stone' })).toBeVisible();
+  await page.getByRole('button', { name: 'Previous move', exact: true }).click();
+  await page.getByRole('button', { name: 'Next move', exact: true }).click();
+  await expect(page.getByRole('gridcell', { name: 'T19, black stone' })).toBeVisible();
+  await page.getByRole('button', { name: 'Return to played game', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'D16, played move 1, Blunder' })).toBeVisible();
+  await page.getByRole('button', { name: 'Last move', exact: true }).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('6/6');
+  await expect(page.getByRole('button', { name: 'Return to played game', exact: true })).toHaveCount(0);
+  await mistakes.getByRole('button', { name: /1\. D16/ }).click();
+  const writesBeforeReuse = moveWrites;
+  await page.getByRole('button', { name: /Try E16/ }).click();
+  await expect(page.getByRole('region', { name: 'Explored position' })).toBeVisible();
+  await page.getByRole('button', { name: 'Last move', exact: true }).click();
+  await expect(page.getByRole('gridcell', { name: 'F16, black stone' })).toBeVisible();
+  expect(moveWrites).toBe(writesBeforeReuse);
+  await page.getByRole('button', { name: 'Return to played game', exact: true }).click();
+  const persisted = await (await request.get(`/api/games/${created.id}`)).json();
+  expect(persisted.game.active_head).toBe(ids[6]);
+  expect(persisted.game.result).toBe('W+R');
+  expect(Object.keys(persisted.game.nodes)).toHaveLength(11);
+  expect(await (await request.get(`/api/games/${created.id}/audit`)).json()).toEqual(audit);
+  await mistakes.getByLabel('Include inaccuracies').check();
+  await expect(mistakes.locator('.review-list button')).toHaveCount(3);
+  await page.getByLabel('Sort mistakes').selectOption('severity');
+  await expect(mistakes.locator('.review-list button').first()).toContainText('Blunder');
+  const chart = page.getByRole('slider', { name: 'Review game timeline' });
+  const bounds = (await chart.boundingBox())!;
+  await page.mouse.move(bounds.x + bounds.width * 34 / 300, bounds.y + bounds.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await expect(chart).toHaveAttribute('aria-valuenow', '3');
+  await expect(page.locator('.history-controls > span')).toHaveText('1/6');
+  await page.mouse.up();
+  await expect(page.locator('.history-controls > span')).toHaveText('3/6');
+  await page.setViewportSize({ width: 1360, height: 650 });
+  const side = page.locator('.sidebar-content');
+  const overview = page.getByRole('region', { name: 'Game overview' });
+  const top = (await overview.boundingBox())!.y;
+  await page.locator('.analysis-details summary').click();
+  await expect(page.getByText('Cancel analysis', { exact: true })).toBeVisible();
+  await side.hover(); await page.mouse.wheel(0, 1000);
+  await expect.poll(() => side.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  expect((await overview.boundingBox())!.y).toBe(top);
+  await page.screenshot({ path: 'test-results/review-learning-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await side.evaluate(element => element.scrollTop = 0);
+  await mistakes.getByRole('button', { name: /1\. D16/ }).click();
+  await expect(page.getByRole('gridcell', { name: 'D16, played move 1, Blunder' })).toBeVisible();
+  await side.evaluate(element => element.scrollTop = 0);
+  await page.screenshot({ path: 'test-results/review-learning-mobile.png', fullPage: true });
+  await page.unrouteAll({ behavior: 'wait' });
 });

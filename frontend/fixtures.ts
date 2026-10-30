@@ -36,6 +36,13 @@ export const fixtureEvaluation: Evaluation = {
 export const fixtureView: GameView = {
   game: fixtureGame,
   selected: 'b',
+  previous_position: {
+    board: Array.from({ length: 361 }, (_, i) => (i === 60 ? 1 : 0)),
+    turn: 'W',
+    passes: 0,
+    captures: [0, 0],
+  },
+  analysis: { completed: 1, total: 4, queued: 3, running: false },
   position: {
     board: Array.from({ length: 361 }, (_, i) => (i === 60 ? 1 : i === 300 ? 2 : 0)),
     turn: 'B',
