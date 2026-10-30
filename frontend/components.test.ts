@@ -79,7 +79,9 @@ it('puts the correction before human mistakes and hides engine details', async (
   expect(screen.queryByText('Analysis provenance')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Analyzed positions')).not.toBeInTheDocument();
   await fireEvent.click(screen.getByTitle('Explore E16 → F16'));
-  expect(oncandidate).toHaveBeenCalledWith(view.evaluations.root.candidates[0]);
+  expect(oncandidate).toHaveBeenCalledWith(
+    expect.objectContaining(view.evaluations.root.candidates[0]),
+  );
   await fireEvent.click(screen.getByText('Analysis details', { exact: true }));
   expect(screen.getByText('Cancel analysis')).toBeVisible();
 });

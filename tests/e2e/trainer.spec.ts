@@ -351,6 +351,7 @@ test('Home board tiles load cached SVGs and follow the active played position', 
 
 test('reviews human mistakes before each move and explores corrections without changing the result', async ({ page, request }) => {
   let moveWrites = 0;
+  let preferPlayed = false;
   page.on('request', request => {
     if (request.method() === 'POST' && /\/api\/games\/[^/]+\/(moves|variations)$/.test(request.url())) moveWrites++;
   });
@@ -389,10 +390,40 @@ test('reviews human mistakes before each move and explores corrections without c
       Object.assign(row, { label, score_loss: loss, confidence: '256 visits' });
     }
     const branchLabels: Record<number, string> = { 61: 'AI move', 300: 'Inaccuracy', 62: 'Good move', 18: 'Mistake' };
+    data.candidate_reviews ??= {};
+    data.candidate_reviews[ids[0]] = [
+      { point: 61, category: 'Good move', provisional: false, confidence: 256 },
+      { point: 63, category: 'Good move', provisional: false, confidence: 256 },
+      { point: 60, category: 'Blunder', provisional: false, confidence: 256 },
+    ];
+    if (preferPlayed) {
+      data.evaluations[ids[0]].candidates[0].order = 1;
+      data.evaluations[ids[0]].candidates[0].visits = 8;
+      data.evaluations[ids[0]].candidates[0].score_black = -10;
+      data.evaluations[ids[0]].candidates[0].winrate_black = .1;
+      data.evaluations[ids[0]].candidates[1].order = 2;
+      data.evaluations[ids[0]].candidates[1].visits = 3;
+      data.evaluations[ids[0]].candidates[1].score_black = -7.4;
+      data.evaluations[ids[0]].candidates[1].winrate_black = .35;
+      data.evaluations[ids[0]].candidates[2].order = 0;
+      data.evaluations[ids[0]].score_black = -2;
+      data.evaluations[ids[0]].winrate_black = .4;
+      data.reviews.find((row: { node: string }) => row.node === ids[1]).label = 'Good move';
+      branchLabels[61] = 'Blunder';
+      data.candidate_reviews[ids[0]] = [
+        { point: 60, category: 'Good move', provisional: false, confidence: 256 },
+        { point: 61, category: 'Blunder', provisional: true, confidence: 8 },
+        { point: 63, category: 'Mistake', provisional: true, confidence: 3 },
+      ];
+    }
     for (const row of data.reviews) {
       const node = data.game.nodes[row.node];
       if (!ids.includes(node.id) && node.point !== null && branchLabels[node.point])
         Object.assign(row, { label: branchLabels[node.point], confidence: '256 visits' });
+      if (preferPlayed && node.parent === ids[0] && node.point === 61 && data.evaluations[node.id]) {
+        Object.assign(data.evaluations[node.id], { score_black: -10, winrate_black: .1 });
+        Object.assign(row, { score_loss: 8, winrate_loss: .3 });
+      }
     }
     await route.fulfill({ json: data });
   });
@@ -424,7 +455,7 @@ test('reviews human mistakes before each move and explores corrections without c
   expect(moveWrites).toBe(0);
   expect(Object.keys((await (await request.get(`/api/games/${created.id}`)).json()).game.nodes)).toHaveLength(7);
   await mistakes.getByRole('button', { name: /1\. D16/ }).click();
-  await page.getByRole('gridcell', { name: 'E16, suggestion A, empty' }).click();
+  await page.getByRole('gridcell', { name: 'E16, suggestion A, AI recommendation, empty' }).click();
   await expect(page.getByRole('region', { name: 'Explored position' })).toContainText('Original');
   await expect(page.getByRole('gridcell', { name: 'E16, played move 1, AI move' })).toBeVisible();
   await expect(page.locator('circle.actual-move')).toHaveAttribute('fill', '#3069ad');
@@ -500,5 +531,28 @@ test('reviews human mistakes before each move and explores corrections without c
   await expect(page.getByRole('gridcell', { name: 'D16, played move 1, Blunder' })).toBeVisible();
   await side.evaluate(element => element.scrollTop = 0);
   await page.screenshot({ path: 'test-results/review-learning-mobile.png', fullPage: true });
+  // The best move is already played. Its exclusion must not turn the next candidate into AI.
+  preferPlayed = true;
+  await page.setViewportSize({ width: 1360, height: 1000 });
+  await page.getByRole('button', { name: 'First move', exact: true }).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('0/6');
+  await page.getByRole('button', { name: 'Next move', exact: true }).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('1/6');
+  await expect(page.getByText('Best move played', { exact: true })).toBeVisible();
+  const knownBad = page.getByRole('gridcell', { name: 'E16, suggestion A, Blunder, empty' });
+  await expect(knownBad).toHaveAttribute('title', 'Engine #2 · Blunder · 8 candidate visits');
+  const point = await knownBad.evaluate(button => Number(button.id.replace('intersection-', '')));
+  const marker = page.locator(`svg.board circle[cx="${48 + point % 19 * 32}"][cy="${48 + Math.floor(point / 19) * 32}"][r="12"]`);
+  await expect(marker).toHaveAttribute('stroke', '#b8363b');
+  const estimated = page.getByRole('gridcell', { name: 'G16, suggestion B, Estimated Mistake, empty' });
+  await expect(estimated).toHaveAttribute('title', 'Engine #3 · Estimated Mistake · 3 candidate visits');
+  await expect(page.locator('svg.board circle[cx="240"][cy="144"][r="12"]')).toHaveAttribute('stroke', '#a64c10');
+  await page.locator('.other-suggestions summary').click();
+  await expect(page.locator('.other-suggestions .candidate-letter').first()).toHaveCSS('color', 'rgb(184, 54, 59)');
+  const writesBeforeBad = moveWrites;
+  await knownBad.click();
+  await expect(page.locator('circle.actual-move')).toHaveAttribute('fill', '#b8363b');
+  expect(moveWrites).toBe(writesBeforeBad);
+  await page.screenshot({ path: 'test-results/review-best-already-played.png', fullPage: true });
   await page.unrouteAll({ behavior: 'wait' });
 });

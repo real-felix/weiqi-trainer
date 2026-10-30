@@ -68,6 +68,13 @@ pub struct MoveReview {
     pub confidence: String,
 }
 #[derive(Serialize)]
+pub struct CandidateReview {
+    pub point: Option<usize>,
+    pub category: String,
+    pub provisional: bool,
+    pub confidence: u32,
+}
+#[derive(Serialize)]
 pub struct GameView {
     pub game: Game,
     pub position: Position,
@@ -75,6 +82,7 @@ pub struct GameView {
     pub selected: String,
     pub evaluations: BTreeMap<String, Evaluation>,
     pub reviews: Vec<MoveReview>,
+    pub candidate_reviews: BTreeMap<String, Vec<CandidateReview>>,
     pub thinking: bool,
     pub analysis: AnalysisProgress,
 }
@@ -508,6 +516,50 @@ impl App {
                 review
             })
             .collect();
+        let mut candidate_reviews = BTreeMap::new();
+        let contexts = std::iter::once((selected.as_str(), position.turn)).chain(
+            g.nodes[&selected]
+                .parent
+                .as_deref()
+                .zip(previous_position.as_ref().map(|position| position.turn)),
+        );
+        for (node, turn) in contexts {
+            if let Some(before) = evaluations.get(node)
+                && let Some(best) = before.candidates.first()
+            {
+                let sign = if turn == Color::B { 1. } else { -1. };
+                let candidates = before
+                    .candidates
+                    .iter()
+                    .map(|candidate| {
+                        let score_loss =
+                            ((best.score_black - candidate.score_black) * sign).max(0.);
+                        let win_loss =
+                            ((best.winrate_black - candidate.winrate_black) * sign).max(0.);
+                        let confidence = before.visits.min(best.visits).min(candidate.visits);
+                        let category = classify(
+                            score_loss,
+                            win_loss,
+                            g.rank,
+                            candidate.point == best.point,
+                            confidence,
+                            &s.classification,
+                        );
+                        CandidateReview {
+                            point: candidate.point,
+                            category: category
+                                .unwrap_or_else(|| {
+                                    classify_loss(score_loss, win_loss, g.rank, &s.classification)
+                                })
+                                .into(),
+                            provisional: category.is_none(),
+                            confidence,
+                        }
+                    })
+                    .collect();
+                candidate_reviews.insert(node.to_string(), candidates);
+            }
+        }
         let thinking = self.thinking.lock().unwrap().contains(id);
         let analysis = AnalysisProgress {
             completed: evaluations.len(),
@@ -533,6 +585,7 @@ impl App {
             selected,
             evaluations,
             reviews,
+            candidate_reviews,
             thinking,
             analysis,
         })
@@ -677,6 +730,58 @@ mod tests {
         let review = view.reviews.iter().find(|r| r.node == b).unwrap();
         assert_eq!(review.score_loss, Some(7.));
         assert_eq!(review.label.as_deref(), Some("Blunder"));
+    }
+    #[test]
+    fn unplayed_candidates_have_provisional_categories_from_the_movers_perspective() {
+        for color in [Color::B, Color::W] {
+            let mut repo = Repository::open(Path::new(":memory:")).unwrap();
+            let mut game = Game::new(color, -5, "auto".into());
+            let root = game.root.clone();
+            let parent = if color == Color::W {
+                game.add(&root, Some(0), true).unwrap()
+            } else {
+                root
+            };
+            let node = game.add(&parent, Some(64), false).unwrap();
+            repo.save(&game).unwrap();
+            let sign = if color == Color::B { 1. } else { -1. };
+            let mut before = evaluation();
+            before.visits = 257;
+            before.candidates = vec![
+                Candidate {
+                    point: Some(64),
+                    visits: 237,
+                    score_black: 17.278 * sign,
+                    winrate_black: 0.5,
+                    pv: vec![Some(64)],
+                    order: 0,
+                },
+                Candidate {
+                    point: Some(79),
+                    visits: 8,
+                    score_black: 10.568 * sign,
+                    winrate_black: 0.5,
+                    pv: vec![Some(79)],
+                    order: 1,
+                },
+            ];
+            repo.save_evaluation(&game.id, &parent, &before).unwrap();
+            let app = App::new(repo, "test".into());
+            let view = app.view(&game.id, Some(&node)).unwrap();
+            let estimates = &view.candidate_reviews[&parent];
+            assert_eq!(estimates[0].category, "Good move");
+            assert!(!estimates[0].provisional);
+            assert_eq!(estimates[1].point, Some(79));
+            assert_eq!(estimates[1].category, "Mistake");
+            assert!(estimates[1].provisional);
+            assert_eq!(estimates[1].confidence, 8);
+            assert_eq!(
+                classify(6.71, 0., -5, false, 8, &ClassificationConfig::default()),
+                None
+            );
+            assert_eq!(view.game.nodes.len(), if color == Color::W { 3 } else { 2 });
+            assert!(!view.game.nodes.values().any(|node| node.point == Some(79)));
+        }
     }
     #[test]
     fn analysis_queue_deduplicates_promotes_and_cancels() {

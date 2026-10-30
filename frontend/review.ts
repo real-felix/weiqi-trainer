@@ -20,12 +20,47 @@ export const lead = (evaluation: Pick<Evaluation, 'score_black'> | undefined) =>
     : 'Pending';
 export const percent = (value: number | null) =>
   value === null ? 'Pending' : `${(value * 100).toFixed(1)}%`;
-export const suggestionColor = (index: number) =>
-  index === 0 ? colors['AI move'] : colors['Good move'];
+export type ReviewCandidate = Candidate & {
+  preferred: boolean;
+  category: string | null;
+  provisional: boolean;
+  rank: number;
+};
+export const suggestionLabel = (candidate: ReviewCandidate) =>
+  candidate.preferred
+    ? 'AI recommendation'
+    : candidate.category
+      ? `${candidate.provisional ? 'Estimated ' : ''}${candidate.category}`
+      : 'Unreviewed alternative';
+export const suggestionTitle = (candidate: ReviewCandidate) =>
+  `Engine #${candidate.rank} · ${suggestionLabel(candidate)}${candidate.preferred && candidate.provisional ? ' (provisional)' : ''} · ${candidate.visits} candidate visits`;
+export const suggestionColor = (candidate: ReviewCandidate) =>
+  colors[candidate.preferred ? 'AI move' : (candidate.category ?? '')] ?? '#697061';
 export function orderedCandidates(candidates: Candidate[], turn: Color) {
   const sign = turn === 'B' ? 1 : -1;
   return [...candidates].sort(
     (a, b) => a.order - b.order || (b.score_black - a.score_black) * sign || b.visits - a.visits,
+  );
+}
+export function reviewCandidates(view: GameView, parent: string, turn: Color): ReviewCandidate[] {
+  const reviews = new Map(view.reviews.map((review) => [review.node, review.label]));
+  const categories = new Map(
+    Object.values(view.game.nodes)
+      .filter((node) => node.parent === parent)
+      .map((node) => [node.point, reviews.get(node.id) ?? null]),
+  );
+  const estimates = new Map(
+    (view.candidate_reviews?.[parent] ?? []).map((estimate) => [estimate.point, estimate]),
+  );
+  return orderedCandidates(view.evaluations[parent]?.candidates ?? [], turn).map(
+    (candidate, index) => ({
+      ...candidate,
+      preferred: index === 0,
+      category: categories.get(candidate.point) ?? estimates.get(candidate.point)?.category ?? null,
+      provisional:
+        !categories.get(candidate.point) && (estimates.get(candidate.point)?.provisional ?? false),
+      rank: index + 1,
+    }),
   );
 }
 export function correction(view: GameView, id = view.selected) {
@@ -33,10 +68,7 @@ export function correction(view: GameView, id = view.selected) {
   const before = node?.parent ? view.evaluations[node.parent] : undefined;
   const after = view.evaluations[id];
   const review = view.reviews.find((review) => review.node === id);
-  const candidates = orderedCandidates(
-    (node?.parent ? before : after)?.candidates ?? [],
-    node?.color ?? view.position.turn,
-  );
+  const candidates = reviewCandidates(view, node?.parent ?? id, node?.color ?? view.position.turn);
   const actual = after ?? before?.candidates.find((candidate) => candidate.point === node?.point);
   return {
     node,

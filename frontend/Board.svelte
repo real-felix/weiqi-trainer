@@ -1,6 +1,11 @@
 <script lang="ts">
-  import { coordinate, type Candidate } from './lib';
-  import { suggestionColor } from './review';
+  import { coordinate } from './lib';
+  import {
+    suggestionColor,
+    suggestionLabel,
+    suggestionTitle,
+    type ReviewCandidate,
+  } from './review';
   let {
     board,
     turn = 'B',
@@ -18,7 +23,7 @@
     disabled?: boolean;
     scoring?: boolean;
     dead?: number[];
-    candidates?: Candidate[];
+    candidates?: ReviewCandidate[];
     actual?: { point: number | null; move: number; color: string; label: string } | null;
     onplay: (point: number) => void;
   } = $props();
@@ -133,9 +138,9 @@
           cx={x(c.point)}
           cy={y(c.point)}
           r="12"
-          fill={i === 0 ? '#c2daf7' : '#cae2c6'}
+          fill={`color-mix(in srgb, ${suggestionColor(c)} 25%, white)`}
           fill-opacity="0.95"
-          stroke={suggestionColor(i)}
+          stroke={suggestionColor(c)}
         />
         <text
           x={x(c.point)}
@@ -175,12 +180,14 @@
       <div role="row" class="board-row">
         {#each rows as col (col)}
           {@const p = row * 19 + col}
+          {@const candidate = candidates.find((candidate) => candidate.point === p)}
           <button
             id={`intersection-${p}`}
             type="button"
             role="gridcell"
             tabindex={cursor === p ? 0 : -1}
-            aria-label={`${coordinate(p)}, ${actual?.point === p ? `played move ${actual.move}, ${actual.label}` : candidates.some((candidate) => candidate.point === p) ? `suggestion ${String.fromCharCode(65 + candidates.findIndex((candidate) => candidate.point === p))}, empty` : board[p] === 1 ? 'black stone' : board[p] === 2 ? 'white stone' : 'empty'}${dead.includes(p) ? ', marked dead' : ''}`}
+            aria-label={`${coordinate(p)}, ${actual?.point === p ? `played move ${actual.move}, ${actual.label}` : candidate ? `suggestion ${String.fromCharCode(65 + candidates.indexOf(candidate))}, ${suggestionLabel(candidate)}, empty` : board[p] === 1 ? 'black stone' : board[p] === 2 ? 'white stone' : 'empty'}${dead.includes(p) ? ', marked dead' : ''}`}
+            title={candidate ? suggestionTitle(candidate) : undefined}
             aria-disabled={disabled || (!scoring && !!board[p])}
             aria-selected={last === p}
             onkeydown={(e) => key(e, p)}

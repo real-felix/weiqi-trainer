@@ -8,7 +8,9 @@
     lead,
     percent,
     playerWinrate,
-    orderedCandidates,
+    reviewCandidates,
+    suggestionColor,
+    suggestionTitle,
   } from './review';
   let {
     view,
@@ -31,9 +33,7 @@
   const rows = $derived(mistakeRows(view, inaccuracies, sort));
   const evaluation = $derived(view.evaluations[view.selected]);
   const candidates = $derived(
-    origin
-      ? orderedCandidates(evaluation?.candidates ?? [], view.position.turn)
-      : focus.alternatives,
+    origin ? reviewCandidates(view, view.selected, view.position.turn) : focus.alternatives,
   );
   const beforeWin = $derived(playerWinrate(focus.before, view.game.human));
   const afterWin = $derived(playerWinrate(focus.actual, view.game.human));
@@ -104,13 +104,19 @@
     {#if !origin && focus.bestPlayed}<p class="small muted">Best move played</p>{/if}
     {#if candidates[0]}
       {#if origin || !focus.bestPlayed}<button
-          class="suggestion best"
+          class="suggestion"
+          class:best={candidates[0].preferred}
           onclick={() => oncandidate(candidates[0])}
           title={`Explore ${candidates[0].pv.map(coordinate).join(' → ')}`}
         >
-          <span class="candidate-letter">A</span><span
+          <span
+            class="candidate-letter"
+            style:color={suggestionColor(candidates[0])}
+            title={suggestionTitle(candidates[0])}>A</span
+          ><span
             ><strong>{origin ? 'Continue' : 'Try'} {coordinate(candidates[0].point)}</strong><small
-              >{candidates[0].pv.slice(1, 5).map(coordinate).join(' → ') || 'Suggested move'}</small
+              >#{candidates[0].rank} · {candidates[0].pv.slice(1, 5).map(coordinate).join(' → ') ||
+                'Suggested move'}</small
             ></span
           ><ChevronRight size={16} aria-hidden="true" />
         </button>{/if}
@@ -131,11 +137,15 @@
                 title={`Explore ${candidate.pv.map(coordinate).join(' → ')}`}
                 ><span
                   class="candidate-letter"
-                  class:secondary={!!origin || !focus.bestPlayed || index > 0}
+                  style:color={suggestionColor(candidate)}
+                  title={suggestionTitle(candidate)}
                   >{String.fromCharCode((!origin && focus.bestPlayed ? 65 : 66) + index)}</span
                 ><span
                   ><strong>{coordinate(candidate.point)}</strong><small
-                    >{candidate.pv.slice(1, 5).map(coordinate).join(' → ')}</small
+                    >#{candidate.rank} · {candidate.pv
+                      .slice(1, 5)
+                      .map(coordinate)
+                      .join(' → ')}</small
                   ></span
                 ><span class="candidate-evaluation"
                   >{lead(candidate)}<small
@@ -296,14 +306,10 @@
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    color: #3069ad;
-    background: #e7edf5;
+    color: var(--muted);
+    background: color-mix(in srgb, currentColor 12%, var(--surface));
     flex-shrink: 0;
     font-weight: 550;
-  }
-  .candidate-letter.secondary {
-    color: #287647;
-    background: #e7efe9;
   }
   small {
     display: block;

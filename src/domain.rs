@@ -425,15 +425,24 @@ pub fn classify(
     {
         return Some("AI move");
     }
+    Some(classify_loss(score_loss, win_loss, rank, c))
+}
+
+pub fn classify_loss(
+    score_loss: f64,
+    win_loss: f64,
+    rank: i32,
+    c: &ClassificationConfig,
+) -> &'static str {
     let factor = 1. + (-rank).max(0) as f64 * 0.025;
     for i in (0..3).rev() {
         if score_loss >= c.score_thresholds[i] * factor
             || win_loss >= c.winrate_thresholds[i] * factor
         {
-            return Some(["Inaccuracy", "Mistake", "Blunder"][i]);
+            return ["Inaccuracy", "Mistake", "Blunder"][i];
         }
     }
-    Some("Good move")
+    "Good move"
 }
 
 #[cfg(test)]

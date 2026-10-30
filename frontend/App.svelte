@@ -19,7 +19,7 @@
     Download,
   } from '@lucide/svelte';
   import { watchLiveUpdates } from './live-updates';
-  import { correction, originalMove, orderedCandidates } from './review';
+  import { correction, originalMove, reviewCandidates } from './review';
   import {
     api,
     colors,
@@ -79,7 +79,6 @@
           view.game.status === 'playing' &&
           view.position.turn === view.game.human)),
   );
-  const evaluation = $derived(view?.evaluations[view.selected]);
   const focus = $derived(view ? correction(view) : null);
   const comparing = $derived(
     review && !exploration && !!view?.previous_position && !!selectedNode?.parent,
@@ -89,7 +88,7 @@
     review && view
       ? (comparing
           ? (focus?.alternatives ?? [])
-          : orderedCandidates(evaluation?.candidates ?? [], view.position.turn)
+          : reviewCandidates(view, view.selected, view.position.turn)
         ).slice(0, 5)
       : [],
   );

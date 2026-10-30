@@ -62,6 +62,10 @@ export interface GameView {
   selected: string;
   evaluations: Record<string, Evaluation>;
   reviews: Review[];
+  candidate_reviews?: Record<
+    string,
+    { point: number | null; category: string; provisional: boolean; confidence: number }[]
+  >;
   thinking: boolean;
   analysis: { completed: number; total: number; queued: number; running: boolean };
 }
