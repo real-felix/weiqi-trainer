@@ -323,6 +323,17 @@
     if (!existing) return false;
     if (comparing && existing.id === view.selected) {
       if (!active) navigate(1);
+      else {
+        // The last played move has no next node to inspect. Continue from its
+        // resulting position, retaining the saved head as the return point.
+        exploration = {
+          origin: view.selected,
+          line: currentPath.map((node) => node.id),
+        };
+        follow = false;
+        navVersion++;
+        queueAnalysis();
+      }
     } else await selectNode(existing.id);
     return true;
   }
@@ -547,6 +558,8 @@
         <h1>
           {view.game.imported ? 'Imported game' : `Human SL ${rankLabel(view.game.rank)}`}
           <span class="versus" aria-hidden="true">·</span>
+          <span class="game-komi">{view.game.komi} komi</span>
+          <span class="versus" aria-hidden="true">·</span>
           <span class="game-turn">
             <span
               class="mini-stone"
@@ -592,7 +605,7 @@
     <main class="settings-main">
       <header class="page-intro">
         <h1>Settings</h1>
-        <p>Configure your local engines and analysis.</p>
+        <p>Set your player name, local engines and analysis.</p>
       </header>
       <SettingsPanel
         value={appState.settings}
@@ -611,7 +624,7 @@
       <section class="new-game-card">
         <div>
           <h2 class="card-title">Human SL {rankLabel(appState.opponent_rank)}</h2>
-          <p>Adaptive strength · 19 × 19 · AGA · 7.5 komi</p>
+          <p>Adaptive strength · 19 × 19 · AGA · {appState.opponent_komi} komi</p>
         </div>
         <button class="primary new-game" onclick={() => (newGameOpen = !newGameOpen)}
           >New game <Plus size={19} aria-hidden="true" /></button
@@ -790,7 +803,7 @@
                         disabled={busy}>Confirm final result</button
                       >
                       <p class="small muted">
-                        This result and its rating update are permanent.
+                        This result and its level update are permanent.
                       </p>{/if}{/if}
                   <button onclick={() => continueHere(true)} disabled={busy}
                     >Disagree / resume play</button
@@ -856,12 +869,12 @@
               </section>
             {/if}
           </div>
-          {#if !review}<div class="game-metadata">
-              <span>Captures · B {view.position.captures[0]} / W {view.position.captures[1]}</span
-              ><a href={`/api/games/${gameId}/sgf`} download
-                ><Download size={16} aria-hidden="true" /> Export SGF</a
-              >
-            </div>{/if}
+          <div class="game-metadata">
+            <span>Captures · B {view.position.captures[0]} / W {view.position.captures[1]}</span
+            ><a href={`/api/games/${gameId}/sgf`} download
+              ><Download size={16} aria-hidden="true" /> Export SGF</a
+            >
+          </div>
         </aside>
       </div>
     </main>

@@ -31,7 +31,7 @@ npm run build
 node tests/benchmarks/navigation.mjs /tmp/state.json /tmp/game-view.json /tmp/navigation.json
 ```
 
-The benchmark loads the running production SPA at `http://127.0.0.1:3000`, replays API snapshots and suppresses engine commands and live notifications. `WEIQI_BENCH_URL` can select another local server. It writes timing JSON and a Chrome CPU profile beside it. Choose a state snapshot whose first Review game is the corresponding completed game.
+The benchmark loads the running production SPA at `http://127.0.0.1:43187`, replays API snapshots and suppresses engine commands and live notifications. `WEIQI_BENCH_URL` can select another local server. It writes timing JSON and a Chrome CPU profile beside it. Choose a state snapshot whose first Review game is the corresponding completed game.
 
 To include real local HTTP reads, set `WEIQI_BENCH_LIVE_READS=1`. Only state and selected-game GET requests reach the server; mutation/analysis requests remain intercepted. This mode measures the updated UI with transport/backend latency included, rather than serving snapshots.
 

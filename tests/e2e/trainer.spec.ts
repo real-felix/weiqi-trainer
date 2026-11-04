@@ -26,10 +26,10 @@ test('play, fork, review, finalize, reload, and interchange SGF',async ({page,re
   await page.screenshot({path:'test-results/review-desktop.png',fullPage:true});
   await page.getByRole('button',{name:'Play',exact:true}).click();await page.getByRole('button',{name:'Return to active continuation'}).click();await page.getByRole('button',{name:'Resign',exact:true}).click();
   await expect(page.getByRole('button',{name:'Play',exact:true})).toHaveCount(0);
-  const audit=await (await request.get(`/api/games/${gameId}/audit`)).json();expect(audit.after).toBeLessThan(audit.before);
+  const audit=await (await request.get(`/api/games/${gameId}/audit`)).json();expect(audit.after_level).toBeLessThan(audit.before_level);
   await request.post(`/api/games/${gameId}/resign`,{data:{head:active}});expect(await (await request.get(`/api/games/${gameId}/audit`)).json()).toEqual(audit);
   await page.reload();await expect(page.getByRole('heading',{name:'Your mistakes'})).toBeVisible();
-  const exported=await request.get(`/api/games/${gameId}/sgf`);expect(exported.headers()['content-disposition']).toContain(`filename=weiqi-trainer-${gameId}.sgf`);const sgf=await exported.text();expect(sgf).toContain('(;B[');
+  const exported=await request.get(`/api/games/${gameId}/sgf`);expect(exported.headers()['content-disposition']).toContain(`filename="player-vs-5k-${view.game.created_at.slice(0,10)}.sgf"`);const sgf=await exported.text();expect(sgf).toContain('(;B[');
   const imported=await (await request.post('/api/games/import',{data:{sgf}})).json();const importedGame=await (await request.get(`/api/games/${imported.id}`)).json();expect(Object.keys(importedGame.game.nodes)).toHaveLength(6);
   await page.getByRole('link',{name:'Weiqi Trainer home',exact:true}).click();await expect(page.getByRole('heading',{name:/Review games/})).toBeVisible();
   await page.screenshot({path:'test-results/home-desktop.png',fullPage:true});
@@ -188,7 +188,7 @@ test('pins the board, fills the sidebar, and follows new moves without disturbin
     const bounds = element.getBoundingClientRect();
     return selected.top >= bounds.top - 1 && selected.bottom <= bounds.bottom + 1;
   });
-  await expect(page.locator('.app-header').getByRole('heading', { name: 'Human SL 5k Black stone Your turn' })).toBeVisible();
+  await expect(page.locator('.app-header').getByRole('heading', { name: 'Human SL 5k 7.5 komi Black stone Your turn' })).toBeVisible();
   await expect(page.locator('.app-header').getByRole('button', { name: 'Review', exact: true })).toBeVisible();
   await expect(page.getByText('AUTO OPPONENT', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Arrow keys on the board to move · Enter to place a stone', { exact: true })).toHaveCount(0);
@@ -433,8 +433,8 @@ test('reviews human mistakes before each move and explores corrections without c
   await expect(mistakes.locator('.review-list button').first()).toContainText('1. D16');
   await expect(mistakes.locator('.review-list button').last()).toContainText('3. Q16');
   await expect(page.locator('.chart-navigation')).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Export SGF' })).toHaveCount(0);
-  await expect(page.locator('.game-metadata')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Export SGF' })).toHaveAttribute('href', `/api/games/${created.id}/sgf`);
+  await expect(page.locator('.game-metadata')).toContainText('Captures · B 0 / W 0');
   await mistakes.getByRole('button', { name: /1\. D16/ }).click();
   const selected = page.getByRole('region', { name: 'Selected move' });
   await expect(selected).toContainText('Played D16');
@@ -554,5 +554,153 @@ test('reviews human mistakes before each move and explores corrections without c
   await expect(page.locator('circle.actual-move')).toHaveAttribute('fill', '#b8363b');
   expect(moveWrites).toBe(writesBeforeBad);
   await page.screenshot({ path: 'test-results/review-best-already-played.png', fullPage: true });
+
+  // Following the final played stone opens the position after it, without a move write.
+  await page.getByRole('button', { name: 'Return to played game', exact: true }).click();
+  await page.getByRole('button', { name: 'Last move', exact: true }).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('6/6');
+  await expect(page.locator('.navbar-game .game-turn')).toHaveText('Your opponent');
+  const terminalWrites = moveWrites;
+  const terminalNodes = Object.keys((await (await request.get(`/api/games/${created.id}`)).json()).game.nodes).length;
+  await page.getByRole('gridcell', { name: /^A1, played move 6,/ }).click();
+  await expect(page.locator('.navbar-game .game-turn')).toHaveText('Your turn');
+  await expect(page.getByRole('region', { name: 'Explored position' })).toBeVisible();
+  expect(moveWrites).toBe(terminalWrites);
+  await page.getByRole('gridcell', { name: 'K10, empty', exact: true }).click();
+  await expect(page.getByRole('gridcell', { name: /^K10, played move 7,/ })).toBeVisible();
+  await page.getByRole('gridcell', { name: 'K11, empty', exact: true }).click();
+  await expect(page.getByRole('gridcell', { name: /^K11, played move 8,/ })).toBeVisible();
+  await expect(page.locator('.history-controls > span')).toHaveText('8/6');
+  const extended = await (await request.get(`/api/games/${created.id}`)).json();
+  const continuation = Object.values<{ parent: string | null; point: number | null; color: string }>(extended.game.nodes).find(node => node.parent === ids[6] && node.point === 180)!;
+  expect(continuation.color).toBe('B');
+  expect(Object.keys(extended.game.nodes)).toHaveLength(terminalNodes + 2);
+  expect(extended.game.active_head).toBe(ids[6]);
+  expect(extended.game.result).toBe('W+R');
+  expect(await (await request.get(`/api/games/${created.id}/audit`)).json()).toEqual(audit);
+  await page.getByRole('button', { name: 'Return to played game', exact: true }).click();
+  await page.getByRole('gridcell', { name: /^A1, played move 6,/ }).click();
+  await page.getByRole('gridcell', { name: 'K10, empty', exact: true }).click();
+  await expect(page.getByRole('gridcell', { name: /^K10, played move 7,/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Next move', exact: true }).click();
+  await expect(page.getByRole('gridcell', { name: /^K11, played move 8,/ })).toBeVisible();
+  expect(moveWrites).toBe(terminalWrites + 2);
   await page.unrouteAll({ behavior: 'wait' });
+});
+
+test('advances by half ranks, persists color-specific starts, and keeps Manual games regular', async ({ page, request }) => {
+  await expect.poll(async () => (await (await request.get('/api/state')).json()).engine.human.supported_ranks.length).toBe(29);
+  const create = async (mode: string, color: string) => {
+    const response = await request.post('/api/games', { data: { mode, rank: -5, color } });
+    expect(response.ok()).toBe(true);
+    return (await response.json()).id as string;
+  };
+  const get = async (id: string) => (await request.get(`/api/games/${id}`)).json();
+  const winAsWhite = async (id: string) => {
+    await page.goto(`/#game/${id}`);
+    await expect(page.locator('.history-controls > span')).toHaveText('1/1');
+    // Surround and capture the deterministic bot's first stone at Q4.
+    for (const [index, location] of ['R4', 'Q5', 'Q3', 'P4'].entries()) {
+      await page.getByRole('gridcell', { name: `${location}, empty`, exact: true }).click();
+      const move = index * 2 + 3;
+      await expect(page.locator('.history-controls > span')).toHaveText(`${move}/${move}`);
+    }
+    await page.getByRole('button', { name: 'Pass', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Settle the board.' })).toBeVisible();
+    await page.getByRole('button', { name: 'Check score with opponent', exact: true }).click();
+    await page.getByRole('button', { name: 'Confirm final result', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Your mistakes' })).toBeVisible();
+    expect((await get(id)).game.result).toMatch(/^W\+/);
+  };
+  const regular = await create('manual', 'W');
+  expect((await get(regular)).game.komi).toBe(7.5);
+  await winAsWhite(regular);
+  let state = await (await request.get('/api/state')).json();
+  expect(state.opponent_rank).toBe(-5);
+  expect(state.opponent_komi).toBe(.5);
+  expect((await (await request.get(`/api/games/${regular}/audit`)).json()).after_level).toBe(-9);
+
+  const halfBlack = await create('auto', 'B');
+  await page.goto(`/#game/${halfBlack}`);
+  await expect(page.locator('.app-header').getByRole('heading', { name: 'Human SL 5k 0.5 komi Black stone Your turn' })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'Q16, white stone', exact: true })).toBeVisible();
+  await expect(page.getByRole('gridcell', { name: 'D4, white stone', exact: true })).toBeVisible();
+  await expect(page.locator('.history-controls > span')).toHaveText('0/0');
+  const halfView = await get(halfBlack);
+  expect(halfView.game.rank).toBe(-5);
+  expect(halfView.game.initial_stones).toHaveLength(2);
+  expect(Object.keys(halfView.game.nodes)).toHaveLength(1);
+  const preview = await (await request.get(`/api/games/${halfBlack}/preview.svg?head=${halfView.game.root}&v=1`)).text();
+  expect(preview.match(/href="#w"/g)).toHaveLength(2);
+  await page.screenshot({ path: 'test-results/half-rank-black-start.png', fullPage: true });
+  const sgf = await (await request.get(`/api/games/${halfBlack}/sgf`)).text();
+  expect(sgf).toContain('KM[0.5]');
+  expect(sgf).toContain('PL[B]AW[pd][dp]');
+  const imported = await (await request.post('/api/games/import', { data: { sgf } })).json();
+  expect((await get(imported.id)).position.board).toEqual(halfView.position.board);
+  expect((await get(imported.id)).game.komi).toBe(.5);
+
+  const halfWhite = await create('auto', 'W');
+  expect((await get(halfWhite)).game.initial_stones).toHaveLength(0);
+  expect((await get(halfWhite)).game.komi).toBe(.5);
+  await winAsWhite(halfWhite);
+  expect((await (await request.get(`/api/games/${halfWhite}/audit`)).json()).after_level).toBe(-8);
+  state = await (await request.get('/api/state')).json();
+  expect(state.opponent_rank).toBe(-4);
+  expect(state.opponent_komi).toBe(7.5);
+
+  const rankedUp = await create('auto', 'B');
+  await page.goto(`/#game/${rankedUp}`);
+  await expect(page.locator('.app-header').getByRole('heading', { name: 'Human SL 4k 7.5 komi Black stone Your turn' })).toBeVisible();
+  await page.getByRole('button', { name: 'Resign', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Your mistakes' })).toBeVisible();
+  state = await (await request.get('/api/state')).json();
+  expect(state.opponent_rank).toBe(-5);
+  expect(state.opponent_komi).toBe(.5);
+  const manual = await create('manual', 'B');
+  expect((await get(manual)).game.komi).toBe(7.5);
+  expect((await get(manual)).game.initial_stones).toHaveLength(0);
+});
+
+
+test('saves a player name without restarting workers and exports named games for either color', async ({ page, request }) => {
+  await page.goto('/#settings');
+  await expect.poll(async () => (await (await request.get('/api/state')).json()).engine.human.state).toBe('ready');
+  const before = (await (await request.get('/api/state')).json()).engine;
+  await page.getByRole('textbox', { name: 'Name or handle', exact: true }).fill('  Félix dv  ');
+  await page.getByRole('button', { name: 'Save name', exact: true }).click();
+  await expect(page.getByText('Name saved.', { exact: true })).toBeVisible();
+  const saved = await (await request.get('/api/state')).json();
+  expect(saved.settings.player_name).toBe('Félix dv');
+  expect(saved.engine.human.pid).toBe(before.human.pid);
+  expect(saved.engine.analysis.pid).toBe(before.analysis.pid);
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: 'Name or handle', exact: true })).toHaveValue('Félix dv');
+  for (const color of ['B', 'W']) {
+    const created = await (await request.post('/api/games', { data: { mode: 'manual', rank: 0, color } })).json();
+    const view = await (await request.get(`/api/games/${created.id}`)).json();
+    const date = view.game.created_at.slice(0, 10);
+    await page.goto(`/#game/${created.id}`);
+    if (color === 'W') {
+      await expect(page.locator('.history-controls > span')).toHaveText('1/1');
+      const afterMove = await (await request.get('/api/state')).json();
+      expect(afterMove.engine.human.pid).toBe(before.human.pid);
+      expect(afterMove.engine.human.supported_ranks).toHaveLength(29);
+    }
+    const pending = page.waitForEvent('download');
+    await page.getByRole('link', { name: 'Export SGF', exact: true }).click();
+    const download = await pending;
+    expect(download.suggestedFilename()).toBe(`Félix-dv-vs-1d-${date}.sgf`);
+    const sgf = await (await request.get(`/api/games/${created.id}/sgf`)).text();
+    expect(sgf).toContain(`${color === 'B' ? 'PB' : 'PW'}[Félix dv]`);
+    expect(sgf).toContain(`${color === 'B' ? 'PW' : 'PB'}[Human SL 1d]`);
+    expect(sgf).toContain(`${color === 'B' ? 'WR' : 'BR'}[1d]`);
+    expect(sgf).toContain(`DT[${date}]`);
+  }
+  await page.getByRole('link', { name: 'Weiqi Trainer home', exact: true }).click();
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeEnabled();
+  await page.getByLabel('Your color').selectOption('B');
+  await page.getByRole('button', { name: 'Start game', exact: true }).click();
+  await expect(page.locator('.history-controls > span')).toHaveText('0/0');
 });

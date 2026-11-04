@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
     );
     let port = std::env::var("WEIQI_PORT")
-        .unwrap_or_else(|_| "3000".into())
+        .unwrap_or_else(|_| "43187".into())
         .parse::<u16>()?;
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
     println!(

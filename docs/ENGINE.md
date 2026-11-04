@@ -35,6 +35,8 @@ These policy-only probe timings support initial **64 quick / 256 deep** budgets,
 
 Fixture tests cover missing paths, malformed JSON, protocol errors, crashes, timeouts, cancellation during startup, and rejection of a non-rank-conditioned human model. Status includes executable/backend output, PID, visits, recent stderr and useful errors. Requests are identified, stale active-head replies are discarded, analysis is queued/deduplicated, and cancellation terminates the analyzer process before a clean lazy restart. Worker restart cancels pending work, and Ctrl-C closes SSE streams and kills/reaps both processes. Recovery revalidates models and resumes interrupted opponent turns.
 
+Worker reuse depends only on process inputs: executable, strong model, configuration and, for the human worker, human model. Player metadata and per-query settings do not reload a worker or clear its validated profiles. A regression exercises actual fixture workers after changing the player name, verifying both PIDs and the complete rank list survive subsequent move generation and analysis.
+
 The restricted coding sandbox cannot create a Metal device. Hardware tests were run with host GPU access. Ordinary fixture/unit tests do not require GPU access.
 
 ## Sources

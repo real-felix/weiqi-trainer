@@ -11,6 +11,8 @@ export default ts.config(
       '.serena/**',
       'playwright-report/**',
       'test-results/**',
+      '.local/**',
+      'Weiqi Trainer.app/**',
     ],
   },
   js.configs.recommended,

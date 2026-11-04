@@ -106,7 +106,15 @@ impl Worker {
         s.supported_ranks.clear();
     }
     async fn start(&mut self, s: &Settings) -> Result<()> {
-        let signature = serde_json::to_string(s).map_err(|e| e.to_string())?;
+        // Only process inputs determine whether KataGo must be reloaded. Player
+        // metadata and per-query settings must not discard validated profiles.
+        let signature = serde_json::to_string(&(
+            &s.executable,
+            &s.analysis_model,
+            &s.config,
+            self.human.then_some(&s.human_model),
+        ))
+        .map_err(|e| e.to_string())?;
         if self.child.is_some() && self.signature == signature {
             return Ok(());
         }
@@ -574,7 +582,17 @@ fn query(g: &Game, node: Option<&str>, visits: u32, human: bool) -> Result<Value
         .iter()
         .filter_map(|n| n.color.map(|c| json!([c, gtp(n.point)])))
         .collect();
-    let mut q = json!({"id":id(),"moves":moves,"rules":"aga","komi":7.5,"boardXSize":19,"boardYSize":19,"maxVisits":visits,"includePolicy":human,"includeOwnership":!human,"reportDuringSearchEvery":0.5,"overrideSettings":{"ignorePreRootHistory":false}});
+    let mut q = json!({"id":id(),"moves":moves,"rules":"aga","komi":g.komi,"boardXSize":19,"boardYSize":19,"maxVisits":visits,"includePolicy":human,"includeOwnership":!human,"reportDuringSearchEvery":0.5,"overrideSettings":{"ignorePreRootHistory":false}});
+    if !g.initial_stones.is_empty() {
+        q["initialStones"] = json!(
+            g.initial_stones
+                .iter()
+                .map(|(color, point)| json!([color, gtp(Some(*point))]))
+                .collect::<Vec<_>>()
+        );
+        q["initialPlayer"] = json!("B");
+        q["whiteHandicapBonus"] = json!("0");
+    }
     if human {
         q["overrideSettings"]["humanSLProfile"] = json!(format!("rank_{}", rank_label(g.rank)));
     }
@@ -761,6 +779,86 @@ pub fn decode_evaluation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn changing_player_name_keeps_workers_and_validated_ranks_on_subsequent_requests() {
+        let root = env!("CARGO_MANIFEST_DIR");
+        let mut settings = Settings {
+            executable: format!("{root}/tests/fake_katago.py"),
+            human_model: format!("{root}/tests/fixtures/human-5k.json"),
+            analysis_model: format!("{root}/tests/fixtures/strong.json"),
+            config: format!("{root}/config/analysis.cfg"),
+            ..Default::default()
+        };
+        let (events, _) = broadcast::channel(10);
+        let engine = Engine::new(events);
+        let game = Game::new(Color::W, -5, "manual".into());
+        engine.probe_human(&settings).await.unwrap();
+        engine
+            .analyze(&settings, &game, &game.root, 64)
+            .await
+            .unwrap();
+        let before = engine.status.lock().unwrap().clone();
+        assert_eq!(before.human.supported_ranks.len(), 29);
+        settings.player_name = "Teacher export name".into();
+        let point = engine.generate(&settings, &game).await.unwrap();
+        game.position(&game.root).unwrap().play(point).unwrap();
+        engine
+            .analyze(&settings, &game, &game.root, 64)
+            .await
+            .unwrap();
+        let after = engine.status.lock().unwrap().clone();
+        engine.shutdown().await;
+        assert_eq!(after.human.supported_ranks, before.human.supported_ranks);
+        assert_eq!(after.human.pid, before.human.pid);
+        assert_eq!(after.analysis.pid, before.analysis.pid);
+    }
+    #[test]
+    fn half_rank_queries_use_the_game_komi_setup_and_actual_human_sl_profile() {
+        for human in [Color::B, Color::W] {
+            let game = Game::at_level(human, -9, "auto".into()).unwrap();
+            for policy in [true, false] {
+                let request = query(&game, Some(&game.root), 64, policy).unwrap();
+                assert_eq!(request["komi"], 0.5);
+                assert_eq!(request["moves"], json!([]));
+                if human == Color::B {
+                    assert_eq!(request["initialStones"], json!([["W", "Q16"], ["W", "D4"]]));
+                    assert_eq!(request["initialPlayer"], "B");
+                    assert_eq!(request["whiteHandicapBonus"], "0");
+                } else {
+                    assert!(request.get("initialStones").is_none());
+                }
+                if policy {
+                    assert_eq!(request["overrideSettings"]["humanSLProfile"], "rank_5k");
+                }
+            }
+        }
+    }
+    #[tokio::test]
+    #[ignore = "requires installed KataGo, both local models and Metal GPU access"]
+    async fn real_engine_half_rank_setups_work_for_both_player_colors() {
+        let (events, _) = broadcast::channel(10);
+        let engine = Engine::new(events);
+        let settings = Settings::default();
+        for human in [Color::B, Color::W] {
+            let mut game = Game::at_level(human, -9, "auto".into()).unwrap();
+            let root = game.root.clone();
+            let evaluation = engine.analyze(&settings, &game, &root, 64).await.unwrap();
+            assert_eq!(evaluation.parameters["request"]["komi"], 0.5);
+            if human == Color::B {
+                game.add(&root, Some(0), false).unwrap();
+            }
+            let point = engine.generate(&settings, &game).await.unwrap();
+            let head = game.active_head.clone();
+            game.add_opponent(&head, point).unwrap();
+            let position = game.position(&game.active_head).unwrap();
+            assert_eq!(position.turn, human);
+            if human == Color::B {
+                assert_eq!(position.board[72], 2);
+                assert_eq!(position.board[288], 2);
+            }
+        }
+        engine.shutdown().await;
+    }
     #[test]
     fn policy_is_sampled_proportionally_and_legally() {
         let mut policy = vec![-1.; 362];

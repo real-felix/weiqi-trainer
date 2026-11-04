@@ -45,6 +45,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/state", get(state))
         .route("/api/events", get(events))
         .route("/api/settings", put(settings))
+        .route("/api/settings/player", put(player_settings))
         .route("/api/engine/restart", post(restart))
         .route("/api/games", post(create))
         .route("/api/games/import", post(import))
@@ -92,7 +93,7 @@ async fn state(State(a): State<Arc<App>>) -> ApiResult<Json<Value>> {
     let games = r.list()?;
     let settings = r.settings()?;
     Ok(Json(
-        json!({"schema_version":1,"games":games,"opponent_rank":p.auto_rank,"initialized":p.initialized,"settings":settings,"engine":a.engine.status.lock().unwrap().clone(),"data_dir":a.data_dir}),
+        json!({"schema_version":1,"games":games,"opponent_rank":p.level.div_euclid(2),"opponent_komi":if p.level.rem_euclid(2)==1 {0.5} else {7.5},"initialized":p.initialized,"settings":settings,"engine":a.engine.status.lock().unwrap().clone(),"data_dir":a.data_dir}),
     ))
 }
 #[derive(Deserialize)]
@@ -163,6 +164,23 @@ async fn settings(State(a): State<Arc<App>>, Json(s): Json<Settings>) -> ApiResu
     a.setup();
     Ok(Json(json!({"saved":true})))
 }
+#[derive(Deserialize)]
+struct PlayerSettings {
+    player_name: String,
+}
+async fn player_settings(
+    State(a): State<Arc<App>>,
+    Json(player): Json<PlayerSettings>,
+) -> ApiResult<Json<Value>> {
+    {
+        let mut repo = a.repo.lock().unwrap();
+        let mut settings = repo.settings()?;
+        settings.player_name = player.player_name;
+        repo.save_settings(&settings)?;
+    }
+    a.changed();
+    Ok(Json(json!({"saved":true})))
+}
 async fn restart(State(a): State<Arc<App>>) -> Json<Value> {
     a.setup();
     Json(json!({"restarting":true}))
@@ -181,14 +199,16 @@ async fn create(State(a): State<Arc<App>>, Json(n): Json<NewGame>) -> ApiResult<
     let g = {
         let mut r = a.repo.lock().unwrap();
         let profile = r.profile()?;
-        let rank = if n.mode == "manual" {
+        let level = if n.mode == "manual" {
             n.rank
                 .ok_or_else(|| ApiError::from("Select an opponent rank".to_string()))?
+                .saturating_mul(2)
         } else if !profile.initialized {
-            n.starting_rank.unwrap_or(-5)
+            n.starting_rank.unwrap_or(-5).saturating_mul(2)
         } else {
-            profile.auto_rank
+            profile.level
         };
+        let rank = level.div_euclid(2);
         if !a
             .engine
             .status
@@ -209,7 +229,7 @@ async fn create(State(a): State<Arc<App>>, Json(n): Json<NewGame>) -> ApiResult<
         } else {
             Color::W
         });
-        let g = Game::new(human, rank, n.mode);
+        let g = Game::at_level(human, level, n.mode)?;
         r.initialize(n.starting_rank.unwrap_or(-5))?;
         r.save(&g)?;
         g
@@ -445,7 +465,26 @@ async fn score(
     ))
 }
 async fn export(State(a): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<impl IntoResponse> {
-    let text = sgf::export(&a.repo.lock().unwrap().game(&id)?);
+    let (game, settings) = {
+        let repo = a.repo.lock().unwrap();
+        (repo.game(&id)?, repo.settings()?)
+    };
+    let text = sgf::export(&game, &settings.player_name);
+    let filename = sgf::export_filename(&game, &settings.player_name);
+    let ascii: String = filename
+        .chars()
+        .map(|c| if c.is_ascii() { c } else { '_' })
+        .collect();
+    let encoded: String = filename
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"._-".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
@@ -453,7 +492,7 @@ async fn export(State(a): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        format!("attachment; filename=weiqi-trainer-{id}.sgf")
+        format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}")
             .parse()
             .unwrap(),
     );
@@ -477,6 +516,56 @@ async fn audit(State(a): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<J
 mod tests {
     use super::*;
     use tower::ServiceExt;
+    #[tokio::test]
+    async fn saving_player_settings_preserves_workers_and_exports_a_unicode_filename() {
+        let mut repo =
+            crate::repository::Repository::open(std::path::Path::new(":memory:")).unwrap();
+        let mut game = Game::new(Color::W, 0, "manual".into());
+        game.created_at = "2025-04-24T18:30:00+00:00".into();
+        repo.save(&game).unwrap();
+        let app = App::new(repo, "test".into());
+        let before = serde_json::to_value(app.engine.status.lock().unwrap().clone()).unwrap();
+        let router = router(app.clone());
+        let saved = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/settings/player")
+                    .header("host", "127.0.0.1:43187")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        json!({"player_name":"  Zoë / Fox  "}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(
+            app.repo.lock().unwrap().settings().unwrap().player_name,
+            "Zoë / Fox"
+        );
+        assert_eq!(
+            serde_json::to_value(app.engine.status.lock().unwrap().clone()).unwrap(),
+            before
+        );
+        let exported = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/games/{}/sgf", game.id))
+                    .header("host", "127.0.0.1:43187")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(exported.status(), StatusCode::OK);
+        assert_eq!(
+            exported.headers()[header::CONTENT_DISPOSITION],
+            "attachment; filename=\"Zo_-Fox-vs-1d-2025-04-24.sgf\"; filename*=UTF-8''Zo%C3%AB-Fox-vs-1d-2025-04-24.sgf"
+        );
+    }
     #[tokio::test]
     async fn suggested_lines_are_atomic_idempotent_and_preserve_a_finalized_result() {
         let mut repo =
@@ -537,7 +626,11 @@ mod tests {
         assert!(Arc::ptr_eq(&cached, &app.preview(&game.id, &head).unwrap()));
         let router = router(app.clone());
         let uri = format!("/api/games/{}/preview.svg?head={head}&v=1", game.id);
-        let request = |uri: &str| Request::builder().uri(uri).header("host", "127.0.0.1:3000");
+        let request = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header("host", "127.0.0.1:43187")
+        };
         let response = router
             .clone()
             .oneshot(request(&uri).body(axum::body::Body::empty()).unwrap())
@@ -618,7 +711,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/state")
-                    .header("host", "127.0.0.1:3000")
+                    .header("host", "127.0.0.1:43187")
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )
@@ -629,7 +722,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/state")
-                    .header("host", "127.0.0.1:3000")
+                    .header("host", "127.0.0.1:43187")
                     .header("origin", "https://other.example")
                     .body(axum::body::Body::empty())
                     .unwrap(),

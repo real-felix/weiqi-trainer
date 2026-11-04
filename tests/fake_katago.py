@@ -30,6 +30,8 @@ for line in sys.stdin:
         print(json.dumps(dict(id=q['id'],action=q['action'],models=models)),flush=True)
         continue
     board=[0]*361
+    for color,move in q.get('initialStones',[]):
+        board[point(move)]=1 if color=='B' else 2
     for color,move in q['moves']:
         if move.lower()!='pass':board[point(move)]=1 if color=='B' else 2
     preferred=next((i for i in [300,60,72,288,*range(361)] if not board[i]),361)

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub player_name: String,
     pub executable: String,
     pub human_model: String,
     pub analysis_model: String,
@@ -28,6 +29,7 @@ impl Default for Settings {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         Self {
+            player_name: String::new(),
             executable: discover()
                 .map(|p| p.to_string_lossy().into())
                 .unwrap_or_default(),
@@ -58,6 +60,9 @@ impl Default for Settings {
 }
 impl Settings {
     pub fn validate(&self) -> Result<()> {
+        if self.player_name.chars().count() > 80 || self.player_name.chars().any(char::is_control) {
+            return Err("Name or handle must be at most 80 characters on one line".into());
+        }
         for (label, p) in [
             ("Executable", &self.executable),
             ("Human model", &self.human_model),

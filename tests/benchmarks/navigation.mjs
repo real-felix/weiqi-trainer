@@ -53,7 +53,7 @@ try {
       pathname === '/api/state' ? appState : pathname === `/api/games/${view.game.id}` ? view : {};
     await route.fulfill({ json: body });
   });
-  await page.goto(process.env.WEIQI_BENCH_URL ?? 'http://127.0.0.1:3000');
+  await page.goto(process.env.WEIQI_BENCH_URL ?? 'http://127.0.0.1:43187');
   await page.getByRole('heading', { name: 'Find your next move.' }).waitFor();
   const samples = [];
   const client = await page.context().newCDPSession(page);

@@ -1,0 +1,11 @@
+# 005 — Checkout launcher and repeatable local updates
+
+2026-11-03. Accepted to support easy daily use and applying requested changes.
+
+Generate a small macOS application bundle in the checkout. Its executable resolves the checkout relative to itself, supplies the common GUI tool paths and invokes the Python standard-library controller. Opening it starts the service in a detached session, waits for HTTP availability, then opens the default browser. The launcher exits; the server and its two engine workers continue without an open terminal. The bundle stays in the checkout and may be pinned to the Dock. No login item, system service, packaging framework or runtime network service is introduced.
+
+The controller serializes lifecycle commands using a file lock. It identifies a listener by executable path and checkout working directory, then checks the authoritative data directory. It can reuse the previous foreground release, but refuses unrelated listeners or another checkout/data directory. Stop uses SIGINT, allowing the existing backend shutdown path to stop KataGo workers. It never force-kills a port owner.
+
+Updates build static assets and a release executable into a new folder under `.local/app/releases`. Existing instances retain absolute paths to their frontend and executable, so builds cannot partially replace their UI. Only after a successful build and consistent SQLite backup does the controller stop the old instance, atomically change the current release symlink, and start the new instance. Backups live under the data directory's `backups/`; migrations run through the normal repository startup. Failed builds preserve the running release. A startup failure reports the server log; backups are retained for explicit recovery rather than automatically overwriting game data.
+
+Python 3.9+, the existing Rust/Node build tools and macOS lsof/ps/open are sufficient. Dependencies must already be installed; the controller neither pulls Git changes nor downloads models. This is a checkout-bound launcher, not a standalone distributable app. Unit tests cover backup integrity, ownership/data-directory guards, graceful signals and failed-build preservation. An opt-in fixture-engine smoke test exercises actual detached processes, duplicate-free reopening, updating a saved game/branch/result and shutdown.

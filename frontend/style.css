@@ -592,6 +592,9 @@ code {
   align-items: baseline;
   gap: 7px;
   white-space: nowrap;
+}
+.game-turn,
+.game-komi {
   font-size: var(--text-sm);
   font-weight: 400;
   color: var(--muted);

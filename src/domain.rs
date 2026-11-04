@@ -43,6 +43,12 @@ pub struct Game {
     pub active_head: String,
     pub human: Color,
     pub rank: i32,
+    #[serde(default)]
+    pub half_rank: bool,
+    #[serde(default = "regular_komi")]
+    pub komi: f64,
+    #[serde(default)]
+    pub initial_stones: Vec<(Color, usize)>,
     pub mode: String,
     pub status: String,
     pub result: Option<String>,
@@ -51,6 +57,9 @@ pub struct Game {
     pub nodes: BTreeMap<String, Node>,
     pub resume_heads: Vec<String>,
     pub imported: bool,
+}
+fn regular_komi() -> f64 {
+    7.5
 }
 pub fn now() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -75,6 +84,9 @@ impl Game {
             active_head: root.clone(),
             human,
             rank,
+            half_rank: false,
+            komi: regular_komi(),
+            initial_stones: vec![],
             mode,
             status: "playing".into(),
             result: None,
@@ -84,6 +96,23 @@ impl Game {
             resume_heads: vec![],
             imported: false,
         }
+    }
+    pub fn at_level(human: Color, level: i32, mode: String) -> Result<Self> {
+        if !(-40..=16).contains(&level) {
+            return Err("Unsupported opponent level".into());
+        }
+        let mut game = Self::new(human, level.div_euclid(2), mode);
+        game.half_rank = level.rem_euclid(2) == 1;
+        if game.half_rank {
+            game.komi = 0.5;
+            if human == Color::B {
+                game.initial_stones = vec![(Color::W, 72), (Color::W, 288)];
+            }
+        }
+        Ok(game)
+    }
+    pub fn level(&self) -> i32 {
+        self.rank * 2 + i32::from(self.half_rank)
     }
     pub fn path(&self, head: &str) -> Result<Vec<&Node>> {
         let mut path = vec![];
@@ -100,7 +129,7 @@ impl Game {
         Ok(path)
     }
     pub fn position(&self, head: &str) -> Result<Position> {
-        let mut p = Position::default();
+        let mut p = Position::with_setup(&self.initial_stones, self.komi)?;
         for n in self.path(head)? {
             if let Some(color) = n.color {
                 if p.turn != color {
@@ -218,6 +247,8 @@ pub struct Position {
     pub passes: u32,
     pub captures: [u32; 2],
     #[serde(skip)]
+    komi: f64,
+    #[serde(skip)]
     history: HashSet<(Vec<u8>, Color)>,
 }
 impl Default for Position {
@@ -229,6 +260,7 @@ impl Default for Position {
             turn: Color::B,
             passes: 0,
             captures: [0, 0],
+            komi: regular_komi(),
         }
     }
 }
@@ -265,6 +297,29 @@ pub fn group(board: &[u8], start: usize) -> (Vec<usize>, bool) {
     (seen.into_iter().collect(), liberty)
 }
 impl Position {
+    pub fn with_setup(stones: &[(Color, usize)], komi: f64) -> Result<Self> {
+        if !komi.is_finite() {
+            return Err("Invalid komi".into());
+        }
+        let mut position = Self {
+            komi,
+            ..Self::default()
+        };
+        for &(color, point) in stones {
+            if point >= POINTS || position.board[point] != 0 {
+                return Err("Invalid starting stones".into());
+            }
+            position.board[point] = color.stone();
+        }
+        if stones
+            .iter()
+            .any(|&(_, point)| !group(&position.board, point).1)
+        {
+            return Err("Starting groups must have liberties".into());
+        }
+        position.history = HashSet::from([(position.board.clone(), Color::B)]);
+        Ok(position)
+    }
     pub fn play(&mut self, point: Option<usize>) -> Result<()> {
         let Some(p) = point else {
             self.passes += 1;
@@ -319,7 +374,7 @@ impl Position {
             board[p] = 0;
         }
         let mut black = board.iter().filter(|&&s| s == 1).count() as f64;
-        let mut white = board.iter().filter(|&&s| s == 2).count() as f64 + 7.5;
+        let mut white = board.iter().filter(|&&s| s == 2).count() as f64 + self.komi;
         let mut seen = HashSet::new();
         for p in 0..POINTS {
             if board[p] != 0 || seen.contains(&p) {
@@ -374,20 +429,10 @@ pub fn rank_label(rank: i32) -> String {
         format!("{}d", rank + 1)
     }
 }
-pub fn rank_rating(rank: i32) -> f64 {
-    2000. + rank as f64 * 100.
-}
-pub fn auto_rank(rating: f64, previous: i32) -> i32 {
-    let target = ((rating - 2000.) / 100.).round() as i32;
-    if (rating - rank_rating(previous)).abs() < 65. {
-        previous
-    } else {
-        target.clamp(-20, 8)
-    }
-}
-pub fn update_rating(rating: f64, rank: i32, won: bool) -> f64 {
-    let expected = 1. / (1. + 10_f64.powf((rank_rating(rank) - rating) / 400.));
-    rating + 40. * (if won { 1. } else { 0. } - expected)
+pub fn next_level(level: i32, won: bool) -> i32 {
+    level
+        .saturating_add(if won { 1 } else { -1 })
+        .clamp(-40, 16)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -448,6 +493,71 @@ pub fn classify_loss(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn half_rank_games_keep_the_base_profile_and_apply_color_specific_conditions() {
+        let regular = Game::at_level(Color::B, -10, "auto".into()).unwrap();
+        assert_eq!(regular.rank, -5);
+        assert_eq!(regular.komi, 7.5);
+        assert!(!regular.half_rank);
+        assert!(regular.initial_stones.is_empty());
+        let white = Game::at_level(Color::W, -9, "auto".into()).unwrap();
+        assert_eq!(white.rank, -5);
+        assert_eq!(white.komi, 0.5);
+        assert!(white.initial_stones.is_empty());
+        assert_eq!(white.position(&white.root).unwrap().turn, Color::B);
+        assert_eq!(
+            white
+                .position(&white.root)
+                .unwrap()
+                .score(&[])
+                .unwrap()
+                .result,
+            "W+0.5"
+        );
+        let mut black = Game::at_level(Color::B, -9, "auto".into()).unwrap();
+        let root = black.root.clone();
+        let position = black.position(&root).unwrap();
+        assert_eq!(black.rank, -5);
+        assert_eq!(position.turn, Color::B);
+        assert_eq!(
+            position.board.iter().filter(|&&stone| stone == 2).count(),
+            2
+        );
+        assert_eq!(position.board[72], 2);
+        assert_eq!(position.board[288], 2);
+        assert_eq!(black.nodes.len(), 1);
+        assert!(black.add(&root, Some(72), false).is_err());
+        let branch = black.add(&root, Some(60), true).unwrap();
+        assert_eq!(black.position(&branch).unwrap().board[288], 2);
+        assert_eq!(black.active_head, root);
+        assert_eq!(
+            Game::at_level(Color::B, -8, "auto".into()).unwrap().rank,
+            -4
+        );
+        assert_eq!(
+            Game::at_level(Color::B, -1, "auto".into()).unwrap().rank,
+            -1
+        );
+        assert_eq!(Game::at_level(Color::B, 0, "auto".into()).unwrap().rank, 0);
+    }
+    #[test]
+    fn starting_stones_seed_superko_and_use_the_games_komi_for_scoring() {
+        let mut position = Position::with_setup(&[(Color::W, 0), (Color::B, 1)], 0.5).unwrap();
+        assert!(
+            position
+                .history
+                .contains(&(position.board.clone(), Color::B))
+        );
+        position.play(Some(19)).unwrap();
+        assert_eq!(position.board[0], 0);
+        assert_eq!(position.captures[0], 1);
+        let half = position.score(&[]).unwrap();
+        position.komi = 7.5;
+        let regular = position.score(&[]).unwrap();
+        assert_eq!(regular.white - half.white, 7.);
+        assert!(Position::with_setup(&[(Color::W, 0), (Color::W, 0)], 0.5).is_err());
+        assert!(Position::with_setup(&[(Color::W, 361)], 0.5).is_err());
+    }
     #[test]
     fn capture_suicide_and_bounds() {
         let mut p = Position::default();
@@ -521,12 +631,16 @@ mod tests {
         assert_eq!(g.result.as_deref(), Some("B+R"));
     }
     #[test]
-    fn rating_hysteresis_and_labels() {
+    fn half_rank_progression_and_labels() {
         assert_eq!(rank_label(-1), "1k");
         assert_eq!(rank_label(0), "1d");
-        assert_eq!(auto_rank(1555., -5), -5);
-        assert_eq!(auto_rank(1566., -5), -4);
-        assert_eq!(update_rating(1500., -5, true), 1520.);
+        assert_eq!(next_level(-10, true), -9);
+        assert_eq!(next_level(-9, true), -8);
+        assert_eq!(next_level(-9, false), -10);
+        assert_eq!(next_level(-10, false), -11);
+        assert_eq!(next_level(-40, false), -40);
+        assert_eq!(next_level(16, true), 16);
+        assert_eq!(next_level(-1, true), 0); // The 1k/1d boundary has no zero kyu rank.
         let c = ClassificationConfig::default();
         assert_eq!(classify(9., 0.3, -5, false, 64, &c), Some("Blunder"));
         assert_eq!(classify(0., 0., -5, true, 64, &c), Some("Good move"));

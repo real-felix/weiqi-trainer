@@ -12,6 +12,9 @@ export interface Game {
   active_head: string;
   human: Color;
   rank: number;
+  half_rank: boolean;
+  komi: number;
+  initial_stones: [Color, number][];
   mode: string;
   status: string;
   result: string | null;
@@ -80,6 +83,7 @@ export interface WorkerStatus {
   supported_ranks: number[];
 }
 export interface Settings {
+  player_name: string;
   executable: string;
   human_model: string;
   analysis_model: string;
@@ -103,6 +107,7 @@ export interface State {
   schema_version: number;
   games: Game[];
   opponent_rank: number;
+  opponent_komi: number;
   initialized: boolean;
   settings: Settings;
   engine: { human: WorkerStatus; analysis: WorkerStatus };

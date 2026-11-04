@@ -10,6 +10,26 @@
   let saving = $state(false);
   let message = $state('');
   let failed = $state(false);
+  let savingPlayer = $state(false);
+  let playerMessage = $state('');
+  let playerFailed = $state(false);
+  async function savePlayer(event: SubmitEvent) {
+    event.preventDefault();
+    savingPlayer = true;
+    playerMessage = '';
+    try {
+      await api('/settings/player', { player_name: draft.player_name }, 'PUT');
+      draft.player_name = draft.player_name.trim();
+      playerMessage = 'Name saved.';
+      playerFailed = false;
+      onsaved();
+    } catch (e) {
+      playerMessage = (e as Error).message;
+      playerFailed = true;
+    } finally {
+      savingPlayer = false;
+    }
+  }
   async function save(event: SubmitEvent) {
     event.preventDefault();
     saving = true;
@@ -27,6 +47,24 @@
     }
   }
 </script>
+
+<section class="settings-panel player-settings panel" aria-label="Player settings">
+  <h2 class="card-title">Player</h2>
+  <p class="muted">Your name appears in exported games and their filenames.</p>
+  <form onsubmit={savePlayer}>
+    <label>Name or handle<input
+      bind:value={draft.player_name}
+      maxlength="80"
+      autocomplete="nickname"
+      spellcheck="false"
+      placeholder="Your name or handle"
+    /></label>
+    {#if playerMessage}<p class:error={playerFailed} role="status">{playerMessage}</p>{/if}
+    <div class="button-row">
+      <button class="primary" disabled={savingPlayer}>{savingPlayer ? 'Saving…' : 'Save name'}</button>
+    </div>
+  </form>
+</section>
 
 <section class="settings-panel panel" aria-label="Engine settings">
   <div class="section-heading">
@@ -210,6 +248,9 @@
 </section>
 
 <style>
+  .player-settings {
+    margin-bottom: 24px;
+  }
   form {
     display: grid;
     gap: 20px;

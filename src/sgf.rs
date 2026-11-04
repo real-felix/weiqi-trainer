@@ -144,8 +144,12 @@ pub fn import(text: &str) -> Result<Game> {
     {
         return Err("Only 19×19 Go records are supported".into());
     }
-    if property(&root, "KM").unwrap_or("7.5").parse::<f64>().ok() != Some(7.5) {
-        return Err("This trainer requires komi 7.5".into());
+    let komi = property(&root, "KM")
+        .unwrap_or("7.5")
+        .parse::<f64>()
+        .map_err(|_| "Invalid komi")?;
+    if komi != 7.5 && komi != 0.5 {
+        return Err("This trainer supports komi 7.5 or 0.5".into());
     }
     if property(&root, "RU")
         .is_some_and(|r| !r.eq_ignore_ascii_case("aga") && !r.eq_ignore_ascii_case("american"))
@@ -153,6 +157,23 @@ pub fn import(text: &str) -> Result<Game> {
         return Err("Only AGA records are supported".into());
     }
     let mut g = Game::new(Color::B, -5, "import".into());
+    g.komi = komi;
+    g.half_rank = komi == 0.5;
+    if let Some(stones) = root.props.get("AW") {
+        if stones.len() != 2 || komi != 0.5 {
+            return Err("Supported setup is two White stones with 0.5 komi".into());
+        }
+        for stone in stones {
+            g.initial_stones.push((
+                Color::W,
+                point(stone)?.ok_or("Starting stones cannot be passes")?,
+            ));
+        }
+    }
+    if property(&root, "PL").is_some_and(|player| player != "B") {
+        return Err("Black must play first".into());
+    }
+    g.position(&g.root)?;
     g.imported = true;
     let mut ids = BTreeMap::new();
     let base = g.root.clone();
@@ -172,11 +193,12 @@ pub fn import(text: &str) -> Result<Game> {
         if depth > 1500 {
             return Err("SGF line is too long".into());
         }
-        if ["AB", "AW", "AE", "HA", "PL"]
-            .iter()
-            .any(|k| n.props.contains_key(*k))
+        if ["AB", "AE", "HA"].iter().any(|k| n.props.contains_key(*k))
+            || (depth > 0 && ["AW", "PL"].iter().any(|key| n.props.contains_key(*key)))
         {
-            return Err("Setup stones, handicap and player overrides are unsupported; import an even AGA game".into());
+            return Err(
+                "Only root setup with two White stones and Black to play is supported".into(),
+            );
         }
         if n.props.contains_key("B") && n.props.contains_key("W") {
             return Err("SGF node contains two moves".into());
@@ -216,22 +238,76 @@ pub fn import(text: &str) -> Result<Game> {
 fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace(']', "\\]")
 }
-pub fn export(g: &Game) -> String {
+fn game_date(g: &Game) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(&g.created_at)
+        .ok()
+        .map(|date| date.format("%Y-%m-%d").to_string())
+}
+pub fn export_filename(g: &Game, player_name: &str) -> String {
+    let name: String = player_name
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let name = name
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    format!(
+        "{}-vs-{}-{}.sgf",
+        if name.is_empty() { "player" } else { &name },
+        rank_label(g.rank),
+        game_date(g).as_deref().unwrap_or("undated")
+    )
+}
+pub fn export(g: &Game, player_name: &str) -> String {
+    let player_name = if player_name.trim().is_empty() {
+        "Player"
+    } else {
+        player_name.trim()
+    };
+    let bot = format!("Human SL {}", rank_label(g.rank));
     let mut text = format!(
-        "(;GM[1]FF[4]CA[UTF-8]AP[WeiqiTrainer:0.1]SZ[19]RU[AGA]KM[7.5]XID[{}]XHEAD[{}]PB[{}]PW[{}]",
+        "(;GM[1]FF[4]CA[UTF-8]AP[WeiqiTrainer:0.1]SZ[19]RU[AGA]KM[{}]XID[{}]XHEAD[{}]PB[{}]PW[{}]",
+        g.komi,
         g.root,
         g.active_head,
         if g.human == Color::B {
-            "You".into()
+            escape(player_name)
         } else {
-            format!("Human SL {}", rank_label(g.rank))
+            bot.clone()
         },
         if g.human == Color::W {
-            "You".into()
+            escape(player_name)
         } else {
-            format!("Human SL {}", rank_label(g.rank))
+            bot
         }
     );
+    text.push_str(&format!(
+        "{}[{}]",
+        if g.human == Color::B { "WR" } else { "BR" },
+        rank_label(g.rank)
+    ));
+    if let Some(date) = game_date(g) {
+        text.push_str(&format!("DT[{date}]"));
+    }
+    if !g.initial_stones.is_empty() {
+        text.push_str("PL[B]AW");
+        for &(_, point) in &g.initial_stones {
+            text.push_str(&format!(
+                "[{}{}]",
+                (b'a' + (point % SIZE) as u8) as char,
+                (b'a' + (point / SIZE) as u8) as char
+            ));
+        }
+    }
     if let Some(result) = &g.result {
         text.push_str(&format!("RE[{}]", escape(result)));
     }
@@ -285,6 +361,66 @@ pub fn export(g: &Game) -> String {
 mod tests {
     use super::*;
     #[test]
+    fn export_names_ranks_and_dates_match_the_players_and_original_game() {
+        let name = "Zoë [Fox]\\";
+        for (human, level) in [(Color::B, -9), (Color::W, 0)] {
+            let mut game = Game::at_level(human, level, "auto".into()).unwrap();
+            game.created_at = "2025-04-24T18:30:00+00:00".into();
+            game.updated_at = "2026-11-03T12:00:00+00:00".into();
+            let text = export(&game, name);
+            let mut parser = Parser {
+                chars: text.chars().collect(),
+                at: 0,
+                count: 0,
+            };
+            let root = parser.tree(0).unwrap();
+            let (player, bot, bot_rank, player_rank) = if human == Color::B {
+                ("PB", "PW", "WR", "BR")
+            } else {
+                ("PW", "PB", "BR", "WR")
+            };
+            assert_eq!(property(&root, player), Some(name));
+            assert_eq!(
+                property(&root, bot),
+                Some(format!("Human SL {}", rank_label(game.rank)).as_str())
+            );
+            assert_eq!(
+                property(&root, bot_rank),
+                Some(rank_label(game.rank).as_str())
+            );
+            assert_eq!(property(&root, player_rank), None);
+            assert_eq!(property(&root, "DT"), Some("2025-04-24"));
+            assert_eq!(
+                export_filename(&game, "  Zoë / Fox  "),
+                format!("Zoë-Fox-vs-{}-2025-04-24.sgf", rank_label(game.rank))
+            );
+            assert_eq!(
+                export_filename(&game, "../../"),
+                format!("player-vs-{}-2025-04-24.sgf", rank_label(game.rank))
+            );
+        }
+    }
+    #[test]
+    fn half_rank_records_roundtrip_komi_and_white_starting_stones() {
+        for human in [Color::B, Color::W] {
+            let mut game = Game::at_level(human, -9, "auto".into()).unwrap();
+            let root = game.root.clone();
+            let node = game.add(&root, Some(60), true).unwrap();
+            game.add(&node, Some(300), true).unwrap();
+            let text = export(&game, "");
+            assert!(text.contains("KM[0.5]"));
+            let imported = import(&text).unwrap();
+            assert_eq!(imported.komi, 0.5);
+            assert_eq!(imported.initial_stones, game.initial_stones);
+            assert_eq!(
+                imported.position(&imported.root).unwrap().board,
+                game.position(&root).unwrap().board
+            );
+            assert_eq!(imported.nodes.len(), 3);
+        }
+        assert!(import("(;GM[1]SZ[19]RU[AGA]KM[0.5]AW[dp][dp]PL[B])").is_err());
+    }
+    #[test]
     fn roundtrip_variations_active_line_and_escapes() {
         let mut g = Game::new(Color::B, -5, "auto".into());
         let r = g.root.clone();
@@ -294,7 +430,7 @@ mod tests {
         g.add(&b, Some(20), true).unwrap();
         g.active_head = a;
         g.result = Some("B+R".into());
-        let text = export(&g);
+        let text = export(&g, "");
         let imported = import(&text).unwrap();
         assert_eq!(imported.nodes.len(), 5);
         assert_eq!(

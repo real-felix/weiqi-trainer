@@ -8,8 +8,7 @@ pub struct Repository {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
-    pub rating: f64,
-    pub auto_rank: i32,
+    pub level: i32,
     pub initialized: bool,
 }
 impl Repository {
@@ -24,7 +23,7 @@ impl Repository {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if version > 1 {
+        if version > 2 {
             return Err("Database was created by a newer version".into());
         }
         if version == 0 {
@@ -34,18 +33,24 @@ impl Repository {
             ))
             .map_err(|e| e.to_string())?;
         }
+        if version < 2 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; {} COMMIT;",
+                include_str!("../migrations/002_rank_ladder.sql")
+            ))
+            .map_err(|e| e.to_string())?;
+        }
         Ok(Self { conn })
     }
     pub fn profile(&self) -> Result<Profile> {
         self.conn
             .query_row(
-                "SELECT rating, auto_rank, initialized FROM profile WHERE id=1",
+                "SELECT level, initialized FROM profile WHERE id=1",
                 [],
                 |r| {
                     Ok(Profile {
-                        rating: r.get(0)?,
-                        auto_rank: r.get(1)?,
-                        initialized: r.get(2)?,
+                        level: r.get(0)?,
+                        initialized: r.get(1)?,
                     })
                 },
             )
@@ -55,7 +60,12 @@ impl Repository {
         if !(-20..=8).contains(&rank) {
             return Err("Unsupported starting rank".into());
         }
-        self.conn.execute("UPDATE profile SET rating=?1,auto_rank=?2,initialized=1 WHERE id=1 AND initialized=0",params![rank_rating(rank),rank]).map_err(|e| e.to_string())?;
+        self.conn
+            .execute(
+                "UPDATE profile SET level=?1,initialized=1 WHERE id=1 AND initialized=0",
+                [rank * 2],
+            )
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
     pub fn settings(&self) -> Result<Settings> {
@@ -68,8 +78,10 @@ impl Repository {
             .unwrap_or_else(|| Ok(Settings::default()))
     }
     pub fn save_settings(&mut self, s: &Settings) -> Result<()> {
+        let mut s = s.clone();
+        s.player_name = s.player_name.trim().to_string();
         s.validate()?;
-        self.conn.execute("INSERT INTO settings VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",[serde_json::to_string(s).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
+        self.conn.execute("INSERT INTO settings VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",[serde_json::to_string(&s).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
         Ok(())
     }
     pub fn list(&self) -> Result<Vec<Game>> {
@@ -130,6 +142,14 @@ impl Repository {
             .map_err(|e| e.to_string())?;
         if let Some(old) = old {
             let old: Game = serde_json::from_str(&old).map_err(|e| e.to_string())?;
+            if old.rank != g.rank
+                || old.half_rank != g.half_rank
+                || old.human != g.human
+                || old.komi != g.komi
+                || old.initial_stones != g.initial_stones
+            {
+                return Err("Game starting conditions are immutable".into());
+            }
             if old.result.is_some()
                 && (old.result != g.result
                     || old.active_head != g.active_head
@@ -179,11 +199,11 @@ impl Repository {
             return Err("Position changed; review the current active position".into());
         }
         if g.imported {
-            return Err("Imported records cannot update the training rating".into());
+            return Err("Imported records cannot update the training level".into());
         }
         let profile = self.profile()?;
         let won = result.starts_with(&g.human.to_string());
-        let after = update_rating(profile.rating, g.rank, won);
+        let after = next_level(g.level(), won);
         g.result = Some(result.into());
         g.status = "finished".into();
         g.updated_at = now();
@@ -191,13 +211,13 @@ impl Repository {
         meta.nodes.clear();
         let tx = self.conn.transaction().map_err(|e| e.to_string())?;
         tx.execute(
-            "INSERT INTO rating_events VALUES(?1,?2,?3,?4,?5,'elo-k40-v1',?6)",
-            params![g.id, profile.rating, after, g.rank, result, now()],
+            "INSERT INTO rank_events VALUES(?1,?2,?3,?4,?5,'rank-half-step-v1',?6)",
+            params![g.id, profile.level, after, g.level(), result, now()],
         )
         .map_err(|e| e.to_string())?;
         tx.execute(
-            "UPDATE profile SET rating=?1,auto_rank=?2,initialized=1 WHERE id=1",
-            params![after, auto_rank(after, profile.auto_rank)],
+            "UPDATE profile SET level=?1,initialized=1 WHERE id=1",
+            [after],
         )
         .map_err(|e| e.to_string())?;
         tx.execute(
@@ -233,6 +253,10 @@ impl Repository {
         Ok(())
     }
     pub fn audit(&self, id: &str) -> Result<serde_json::Value> {
+        let rank = self.conn.query_row("SELECT before_level,after_level,opponent_level,result,algorithm,created_at FROM rank_events WHERE game_id=?1",[id],|r|Ok(serde_json::json!({"before_level":r.get::<_,i32>(0)?,"after_level":r.get::<_,i32>(1)?,"opponent_level":r.get::<_,i32>(2)?,"result":r.get::<_,String>(3)?,"algorithm":r.get::<_,String>(4)?,"created_at":r.get::<_,String>(5)?}))).optional().map_err(|e|e.to_string())?;
+        if let Some(rank) = rank {
+            return Ok(rank);
+        }
         self.conn.query_row("SELECT before_rating,after_rating,opponent_rank,result,algorithm,created_at FROM rating_events WHERE game_id=?1",[id],|r|Ok(serde_json::json!({"before":r.get::<_,f64>(0)?,"after":r.get::<_,f64>(1)?,"opponent_rank":r.get::<_,i32>(2)?,"result":r.get::<_,String>(3)?,"algorithm":r.get::<_,String>(4)?,"created_at":r.get::<_,String>(5)?}))).optional().map(|x|x.unwrap_or(serde_json::Value::Null)).map_err(|e|e.to_string())
     }
 }
@@ -241,7 +265,115 @@ impl Repository {
 mod tests {
     use super::*;
     #[test]
-    fn migration_restart_immutable_nodes_and_exactly_one_rating() {
+    fn player_name_defaults_for_old_settings_and_persists_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.sqlite3");
+        let mut repo = Repository::open(&path).unwrap();
+        repo.conn
+            .execute(
+                "INSERT INTO settings VALUES(1,?1)",
+                [r#"{"executable":"/local/katago"}"#],
+            )
+            .unwrap();
+        let mut settings = repo.settings().unwrap();
+        assert!(settings.player_name.is_empty());
+        settings.player_name = "  Zoë [Fox]  ".into();
+        repo.save_settings(&settings).unwrap();
+        settings.player_name = "a".repeat(81);
+        assert!(repo.save_settings(&settings).is_err());
+        settings.player_name = "one\ntwo".into();
+        assert!(repo.save_settings(&settings).is_err());
+        drop(repo);
+        let settings = Repository::open(&path).unwrap().settings().unwrap();
+        assert_eq!(settings.player_name, "Zoë [Fox]");
+        assert_eq!(settings.executable, "/local/katago");
+    }
+    #[test]
+    fn elo_migration_preserves_the_existing_rank_games_and_historical_audits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.sqlite3");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(include_str!("../migrations/001_initial.sql"))
+            .unwrap();
+        conn.execute(
+            "UPDATE profile SET rating=1823.4,auto_rank=-2,initialized=1",
+            [],
+        )
+        .unwrap();
+        let mut game = Game::new(Color::B, -5, "auto".into());
+        game.result = Some("W+R".into());
+        game.status = "finished".into();
+        let mut meta = serde_json::to_value(&game).unwrap();
+        for field in ["half_rank", "komi", "initial_stones"] {
+            meta.as_object_mut().unwrap().remove(field);
+        }
+        meta["nodes"] = serde_json::json!({});
+        conn.execute(
+            "INSERT INTO games VALUES(?1,?2)",
+            params![game.id, meta.to_string()],
+        )
+        .unwrap();
+        let root = &game.nodes[&game.root];
+        conn.execute(
+            "INSERT INTO nodes VALUES(?1,?2,NULL,?3)",
+            params![root.id, game.id, serde_json::to_string(root).unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO rating_events VALUES(?1,1500,1480,-5,'W+R','elo-k40-v1','legacy')",
+            [&game.id],
+        )
+        .unwrap();
+        drop(conn);
+        let repo = Repository::open(&path).unwrap();
+        assert_eq!(repo.profile().unwrap().level, -4);
+        assert!(repo.profile().unwrap().initialized);
+        let saved = repo.game(&game.id).unwrap();
+        assert_eq!(saved.komi, 7.5);
+        assert!(saved.initial_stones.is_empty());
+        assert_eq!(saved.result, game.result);
+        assert_eq!(repo.audit(&game.id).unwrap()["algorithm"], "elo-k40-v1");
+        assert_eq!(repo.audit(&game.id).unwrap()["after"], 1480.);
+        drop(repo);
+        assert_eq!(
+            Repository::open(&path).unwrap().profile().unwrap().level,
+            -4
+        );
+    }
+    #[test]
+    fn wins_and_losses_change_one_half_step_once_and_manual_results_use_the_played_level() {
+        let mut repo = Repository::open(Path::new(":memory:")).unwrap();
+        for (level, human, result, expected) in [
+            (-10, Color::B, "B+R", -9),
+            (-9, Color::W, "W+0.5", -8),
+            (-8, Color::B, "W+R", -9),
+            (-9, Color::B, "W+R", -10),
+            (-2, Color::B, "B+R", -1),
+        ] {
+            let game = Game::at_level(human, level, "manual".into()).unwrap();
+            repo.save(&game).unwrap();
+            repo.finalize(&game.id, &game.active_head, result).unwrap();
+            let audit = repo.audit(&game.id).unwrap();
+            repo.finalize(&game.id, &game.root, "B+100.5").unwrap();
+            assert_eq!(repo.profile().unwrap().level, expected);
+            assert_eq!(repo.audit(&game.id).unwrap(), audit);
+            assert_eq!(audit["opponent_level"], level);
+            assert_eq!(audit["algorithm"], "rank-half-step-v1");
+        }
+    }
+    #[test]
+    fn game_starting_conditions_are_immutable_even_before_finalization() {
+        let mut repo = Repository::open(Path::new(":memory:")).unwrap();
+        let mut game = Game::at_level(Color::B, -9, "auto".into()).unwrap();
+        repo.save(&game).unwrap();
+        game.komi = 7.5;
+        assert!(repo.save(&game).is_err());
+        game.komi = 0.5;
+        game.initial_stones.clear();
+        assert!(repo.save(&game).is_err());
+    }
+    #[test]
+    fn migration_restart_immutable_nodes_and_exactly_one_rank_update() {
         let tmp = tempfile::tempdir().unwrap();
         let db = tmp.path().join("db");
         let mut r = Repository::open(&db).unwrap();
@@ -251,10 +383,10 @@ mod tests {
         g.add_opponent(&a, Some(1)).unwrap();
         g.add(&root, Some(19), true).unwrap();
         r.save(&g).unwrap();
-        let before = r.profile().unwrap().rating;
+        let before = r.profile().unwrap().level;
         let done = r.finalize(&g.id, &g.active_head, "B+R").unwrap();
         r.finalize(&g.id, &root, "W+R").unwrap();
-        assert_eq!(r.profile().unwrap().rating, before + 20.);
+        assert_eq!(r.profile().unwrap().level, before + 1);
         drop(r);
         let mut r = Repository::open(&db).unwrap();
         let mut loaded = r.game(&g.id).unwrap();
